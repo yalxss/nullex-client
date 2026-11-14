@@ -1,7 +1,8 @@
 use crate::config::app::get_app_config;
 use crate::config::mihomo::get_controled_mihomo_config;
 use crate::config::template::{default_profile, default_profile_config};
-use crate::core::manager::restart_core;
+use crate::core::manager::{is_core_running, restart_core};
+use crate::core::mihomo_api::mihomo_hot_reload_config;
 use crate::core::profile_updater::{add_profile_updater, remove_profile_updater};
 use crate::state::AppState;
 use crate::utils::device_info::{get_device_model, get_device_os, get_hwid, get_os_version};
@@ -180,7 +181,12 @@ pub async fn change_current_profile(
         add_profile_updater(state, app_handle, &item).await;
     }
 
-    restart_core(state, app_handle).await?;
+    if is_core_running(state).await {
+        if let Err(e) = mihomo_hot_reload_config(state, app_handle).await {
+            eprintln!("[Profile] Hot-reload failed on profile change: {e}, falling back to restart");
+            restart_core(state, app_handle).await?;
+        }
+    }
     Ok(())
 }
 
@@ -236,8 +242,11 @@ pub async fn add_profile_item(
     };
 
     add_profile_updater(state, app_handle, &created).await;
-    if should_restart {
-        restart_core(state, app_handle).await?;
+    if should_restart && is_core_running(state).await {
+        if let Err(e) = mihomo_hot_reload_config(state, app_handle).await {
+            eprintln!("[Profile] Hot-reload failed after add_profile_item: {e}, falling back to restart");
+            restart_core(state, app_handle).await?;
+        }
     }
     Ok(())
 }
@@ -334,8 +343,11 @@ pub async fn remove_profile_item(
         let _ = tokio::fs::remove_dir_all(&work_dir).await;
     }
 
-    if was_current {
-        restart_core(state, app_handle).await?;
+    if was_current && is_core_running(state).await {
+        if let Err(e) = mihomo_hot_reload_config(state, app_handle).await {
+            eprintln!("[Profile] Hot-reload failed on profile remove: {e}, falling back to restart");
+            let _ = restart_core(state, app_handle).await;
+        }
     }
     Ok(())
 }
@@ -832,8 +844,11 @@ pub async fn set_profile_str(
     write_profile_yaml(id, content).await?;
     let cfg = get_profile_config(state, false).await?;
     let current = cfg.get("current").and_then(Value::as_str);
-    if current == Some(id) {
-        restart_core(state, app_handle).await?;
+    if current == Some(id) && is_core_running(state).await {
+        if let Err(e) = mihomo_hot_reload_config(state, app_handle).await {
+            eprintln!("[Profile] Hot-reload failed on set_profile_str: {e}, falling back to restart");
+            restart_core(state, app_handle).await?;
+        }
     }
     Ok(())
 }
