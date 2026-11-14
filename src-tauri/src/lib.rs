@@ -19,7 +19,7 @@ use crate::desktop::theme::init_custom_theme;
 use crate::desktop::tray::create_tray;
 use crate::service::manager::init_key_manager;
 use crate::state::AppState;
-use crate::sys::misc::{check_elevate_task, create_elevate_task_sync};
+use crate::sys::misc::{check_elevate_task, create_elevate_task_sync, sync_task_launcher_sync};
 use crate::sys::sysproxy::disable_sys_proxy_sync;
 use crate::utils::dirs::{
     app_config_path, controled_mihomo_config_path, data_dir, log_dir, mihomo_test_dir,
@@ -232,6 +232,7 @@ async fn bootstrap_app(state: Arc<AppState>, app_handle: AppHandle) {
 
     // First-run Windows elevation check matching Electron init flow
     if cfg!(windows) && !cfg!(debug_assertions) {
+        sync_task_launcher_sync();
         let cli_no_admin = std::env::args().any(|a| a == "--noadmin" || a == "--smoke-test");
         let elevation_declined = app_cfg
             .get("elevationDeclined")

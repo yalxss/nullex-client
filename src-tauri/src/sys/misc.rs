@@ -167,6 +167,18 @@ pub async fn delete_elevate_task() -> Result<(), String> {
     Ok(())
 }
 
+/// Synchronize scheduled task launcher so app updates propagate to Task Scheduler (parity with Koala 1.6.1)
+pub fn sync_task_launcher_sync() {
+    #[cfg(windows)]
+    {
+        let runner_src = resources_files_dir().join("nullex-run.exe");
+        let runner_dst = task_dir().join("nullex-run.exe");
+        if runner_src.exists() {
+            let _ = std::fs::copy(&runner_src, &runner_dst);
+        }
+    }
+}
+
 pub fn create_elevate_task_sync(force: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
