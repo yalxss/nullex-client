@@ -4,19 +4,19 @@
   <img src="./src-tauri/icons/icon.png" alt="Nullex" width="120" />
   <br>
   <br>
-  <a href="https://github.com/yalrssd/nullex-client/releases">
-    <img src="https://img.shields.io/github/v/release/yalrssd/nullex-client?style=flat-square&color=blue" alt="Последний релиз">
+  <a href="https://github.com/yalxss/nullex-client/releases">
+    <img src="https://img.shields.io/github/v/release/yalxss/nullex-client?style=flat-square&color=blue" alt="Последний релиз">
   </a>
-  <a href="https://github.com/yalrssd/nullex-client/releases">
-    <img src="https://img.shields.io/github/downloads/yalrssd/nullex-client/total?style=flat-square&color=green" alt="Скачивания">
+  <a href="https://github.com/yalxss/nullex-client/releases">
+    <img src="https://img.shields.io/github/downloads/yalxss/nullex-client/total?style=flat-square&color=green" alt="Скачивания">
   </a>
-  <a href="https://github.com/yalrssd/nullex-client">
+  <a href="https://github.com/yalxss/nullex-client">
     <img src="https://img.shields.io/badge/платформа-Windows%20x64%20%7C%20ARM64-blue?style=flat-square" alt="Платформа">
   </a>
-  <a href="https://github.com/yalrssd/nullex-client">
+  <a href="https://github.com/yalxss/nullex-client">
     <img src="https://img.shields.io/badge/движок-Rust%20%2B%20Tauri%202-orange?style=flat-square" alt="Движок">
   </a>
-  <a href="https://github.com/yalrssd/nullex-client/blob/main/LICENSE">
+  <a href="https://github.com/yalxss/nullex-client/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/лицензия-GPL--3.0-lightgrey?style=flat-square" alt="Лицензия">
   </a>
 </p>
@@ -52,7 +52,7 @@
 ## 🚀 Быстрый старт
 
 ### 1. Скачивание
-Загрузите актуальную версию со страницы [GitHub Releases](https://github.com/yalrssd/nullex-client/releases/latest):
+Загрузите актуальную версию со страницы [GitHub Releases](https://github.com/yalxss/nullex-client/releases/latest):
 * **Установщик (`Nullex_1.1.0_x64-setup.exe` / `Nullex_1.1.0_arm64-setup.exe`)**: Рекомендуется для обычной установки с ярлыком на рабочем столе и поддержкой автообновлений.
 * **Портативная версия (`Nullex_x64-portable.7z` / `Nullex_arm64-portable.7z`)**: Распакуйте архив и запускайте `Nullex.exe` без установки.
 
@@ -101,7 +101,7 @@
 ### Команды
 ```bash
 # Клонирование репозитория
-git clone https://github.com/yalrssd/nullex-client.git
+git clone https://github.com/yalxss/nullex-client.git
 cd nullex-client
 
 # Установка зависимостей

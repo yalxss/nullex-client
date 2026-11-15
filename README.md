@@ -4,19 +4,19 @@
   <img src="./src-tauri/icons/icon.png" alt="Nullex" width="120" />
   <br>
   <br>
-  <a href="https://github.com/yalrssd/nullex-client/releases">
-    <img src="https://img.shields.io/github/v/release/yalrssd/nullex-client?style=flat-square&color=blue" alt="Latest Release">
+  <a href="https://github.com/yalxss/nullex-client/releases">
+    <img src="https://img.shields.io/github/v/release/yalxss/nullex-client?style=flat-square&color=blue" alt="Latest Release">
   </a>
-  <a href="https://github.com/yalrssd/nullex-client/releases">
-    <img src="https://img.shields.io/github/downloads/yalrssd/nullex-client/total?style=flat-square&color=green" alt="Downloads">
+  <a href="https://github.com/yalxss/nullex-client/releases">
+    <img src="https://img.shields.io/github/downloads/yalxss/nullex-client/total?style=flat-square&color=green" alt="Downloads">
   </a>
-  <a href="https://github.com/yalrssd/nullex-client">
+  <a href="https://github.com/yalxss/nullex-client">
     <img src="https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-blue?style=flat-square" alt="Platform">
   </a>
-  <a href="https://github.com/yalrssd/nullex-client">
+  <a href="https://github.com/yalxss/nullex-client">
     <img src="https://img.shields.io/badge/engine-Rust%20%2B%20Tauri%202-orange?style=flat-square" alt="Engine">
   </a>
-  <a href="https://github.com/yalrssd/nullex-client/blob/main/LICENSE">
+  <a href="https://github.com/yalxss/nullex-client/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-GPL--3.0-lightgrey?style=flat-square" alt="License">
   </a>
 </p>
@@ -52,7 +52,7 @@
 ## 🚀 Quick Start Guide
 
 ### 1. Installation
-Download the latest version from [GitHub Releases](https://github.com/yalrssd/nullex-client/releases/latest):
+Download the latest version from [GitHub Releases](https://github.com/yalxss/nullex-client/releases/latest):
 - **Installer (`Nullex_1.1.0_x64-setup.exe`)**: Recommended for standard installation with auto-startup and desktop shortcuts.
 - **Portable (`Nullex_x64-portable.7z`)**: Unpack and run `Nullex.exe` directly from any folder or USB drive.
 
@@ -101,7 +101,7 @@ For developers contributing to Nullex:
 ### Commands
 ```bash
 # Clone the repository
-git clone https://github.com/yalrssd/nullex-client.git
+git clone https://github.com/yalxss/nullex-client.git
 cd nullex-client
 
 # Install frontend dependencies
