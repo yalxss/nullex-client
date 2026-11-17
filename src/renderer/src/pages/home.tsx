@@ -4,7 +4,7 @@ import { useAppConfig } from '@renderer/hooks/use-app-config'
 import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-config'
 import { useProfileConfig } from '@renderer/hooks/use-profile-config'
 import { useGroups } from '@renderer/hooks/use-groups'
-import { triggerSysProxy, updateTrayIcon, mihomoHotReloadConfig, isRunningAsAdmin, restartAsAdmin, checkTunStatus, runTunDiagnostics } from '@renderer/utils/ipc'
+import { triggerSysProxy, updateTrayIcon, mihomoHotReloadConfig, restartCore, isRunningAsAdmin, restartAsAdmin, checkTunStatus, runTunDiagnostics } from '@renderer/utils/ipc'
 import { useTranslation } from 'react-i18next'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
@@ -216,7 +216,10 @@ const Home: React.FC = () => {
       reopenCoreError()
       return
     }
-    if (targetMode === connectionMode || loading) return
+    // Allow 'off' to proceed even if connectionMode is 'off' when coreProblem or any mode is active,
+    // so user can always forcefully clean up and reset.
+    if (targetMode === connectionMode && !coreProblem && targetMode !== 'off') return
+    if (loading) return
 
     setLoading(true)
     setLoadingDirection(targetMode === 'off' ? 'disconnecting' : 'connecting')
@@ -230,13 +233,16 @@ const Home: React.FC = () => {
           await patchControledMihomoConfig({ tun: { enable: false } })
         }
         if (proxyWasEnabled) {
-          if (writeSysProxy) {
-            await triggerSysProxy(false, onlyActiveDevice)
-          }
           await patchAppConfig({ proxyMode: false })
         }
-        if (tunWasEnabled || proxyWasEnabled) {
-          await mihomoHotReloadConfig()
+        // Always forcefully disable system proxy on Windows/macOS
+        await triggerSysProxy(false, onlyActiveDevice).catch(() => {})
+
+        if (tunWasEnabled) {
+          // Restart core so the WinTun adapter and routes are cleanly destroyed by Windows
+          await restartCore()
+        } else if (proxyWasEnabled) {
+          await mihomoHotReloadConfig().catch(() => restartCore())
         }
       } else if (targetMode === 'proxy') {
         if (writeSysProxy && sysProxyMode === 'manual' && sysProxyDisabled) {
@@ -247,7 +253,12 @@ const Home: React.FC = () => {
           await patchControledMihomoConfig({ tun: { enable: false } })
         }
         await patchAppConfig({ mainSwitchMode: 'sysproxy', proxyMode: true })
-        await mihomoHotReloadConfig()
+        if (tunWasEnabled) {
+          // Restart core so WinTun is cleanly destroyed before proxying
+          await restartCore()
+        } else {
+          await mihomoHotReloadConfig().catch(() => restartCore())
+        }
         if (writeSysProxy) {
           await triggerSysProxy(true, onlyActiveDevice)
         }
@@ -270,13 +281,12 @@ const Home: React.FC = () => {
           return
         }
         if (proxyWasEnabled) {
-          if (writeSysProxy) {
-            await triggerSysProxy(false, onlyActiveDevice)
-          }
+          await triggerSysProxy(false, onlyActiveDevice).catch(() => {})
           await patchAppConfig({ proxyMode: false })
         }
         await patchControledMihomoConfig({ tun: { enable: true }, dns: { enable: true } })
-        await mihomoHotReloadConfig()
+        // Always restart core when enabling TUN mode on Windows to properly initialize WinTun
+        await restartCore()
 
         // Verify TUN adapter status (wait up to 3s for adapter creation)
         await new Promise((resolve) => setTimeout(resolve, 1500))
@@ -290,9 +300,13 @@ const Home: React.FC = () => {
           // TUN failed to start: roll back to Proxy or Off
           await patchControledMihomoConfig({ tun: { enable: false } })
           await patchAppConfig({ mainSwitchMode: 'sysproxy', proxyMode: proxyWasEnabled })
-          await mihomoHotReloadConfig()
-          if (proxyWasEnabled && writeSysProxy) {
-            await triggerSysProxy(true, onlyActiveDevice)
+          if (proxyWasEnabled) {
+            await restartCore()
+            if (writeSysProxy) {
+              await triggerSysProxy(true, onlyActiveDevice)
+            }
+          } else {
+            await restartCore()
           }
 
           const errMsg = status.errorMessage || (isRu ? 'TUN адаптер не запустился' : 'TUN adapter failed to start')
