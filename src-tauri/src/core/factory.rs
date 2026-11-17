@@ -286,11 +286,25 @@ pub async fn generate_profile(
 
         // Apply effective ports based on proxyMode + tun.enable
         let ports = get_effective_ports(state).await;
-        let p_port = ports["port"].as_u64().unwrap_or(0);
-        let p_socks = ports["socksPort"].as_u64().unwrap_or(0);
-        let p_redir = ports["redirPort"].as_u64().unwrap_or(0);
-        let p_tproxy = ports["tproxyPort"].as_u64().unwrap_or(0);
-        let p_mixed = ports["mixedPort"].as_u64().unwrap_or(0);
+        let p_val = |key: &str, alt_key: &str| -> u64 {
+            let v = &ports[key];
+            if let Some(n) = v.as_u64() {
+                return n;
+            }
+            if let Some(n) = v.get("value").and_then(Value::as_u64) {
+                return n;
+            }
+            let alt = &ports[alt_key];
+            if let Some(n) = alt.as_u64() {
+                return n;
+            }
+            alt.get("value").and_then(Value::as_u64).unwrap_or(0)
+        };
+        let p_port = p_val("portNum", "port");
+        let p_socks = p_val("socksPort", "socks-port");
+        let p_redir = p_val("redirPort", "redir-port");
+        let p_tproxy = p_val("tproxyPort", "tproxy-port");
+        let p_mixed = p_val("mixedPort", "mixed-port");
 
         c_obj.insert("port".into(), json!(p_port));
         c_obj.insert("socks-port".into(), json!(p_socks));

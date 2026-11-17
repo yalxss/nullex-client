@@ -297,6 +297,30 @@ pub fn get_interfaces() -> Value {
     Value::Object(map)
 }
 
+pub fn has_active_network_interface() -> bool {
+    let Ok(ifaces) = NetworkInterface::show() else {
+        return false;
+    };
+    for iface in ifaces {
+        let name_low = iface.name.to_ascii_lowercase();
+        if name_low.contains("meta")
+            || name_low.contains("wintun")
+            || name_low.contains("mihomo")
+            || name_low.contains("nullex")
+        {
+            continue;
+        }
+        for addr in iface.addr {
+            if let Addr::V4(v4) = addr {
+                if !v4.ip.is_loopback() && !v4.ip.is_link_local() && !v4.ip.is_unspecified() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 pub async fn copy_env(state: &Arc<AppState>, env_type: &str) -> Result<(), String> {
     let app_cfg = get_app_config(state, false).await.unwrap_or_default();
     let rt = get_runtime_config(state).await.unwrap_or_default();

@@ -59,12 +59,27 @@ fn install_shutdown_hook(hwnd_raw: isize, state: Arc<AppState>) {
         wparam: windows_sys::Win32::Foundation::WPARAM,
         lparam: windows_sys::Win32::Foundation::LPARAM,
     ) -> windows_sys::Win32::Foundation::LRESULT {
-        if msg == WM_QUERYENDSESSION || msg == WM_ENDSESSION {
+        if msg == WM_QUERYENDSESSION {
             if let Some(st) = STATE_PTR.get() {
                 st.is_quitting.store(true, std::sync::atomic::Ordering::SeqCst);
             }
-            if msg == WM_QUERYENDSESSION {
-                return 1; // TRUE = allow session to end
+            return 1; // TRUE = allow session to end
+        }
+        if msg == WM_ENDSESSION {
+            if wparam != 0 {
+                if let Some(st) = STATE_PTR.get() {
+                    st.is_quitting.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let pid = st.core_pid.swap(0, std::sync::atomic::Ordering::SeqCst);
+                    if pid > 0 {
+                        use std::os::windows::process::CommandExt;
+                        let _ = std::process::Command::new("taskkill")
+                            .args(["/F", "/T", "/PID", &pid.to_string()])
+                            .creation_flags(0x0800_0000)
+                            .output();
+                    }
+                }
+                disable_sys_proxy_sync(false);
+                return 0;
             }
         }
         let orig = ORIG_PROC.load(std::sync::atomic::Ordering::SeqCst);
@@ -280,6 +295,33 @@ async fn bootstrap_app(state: Arc<AppState>, app_handle: AppHandle) {
         let _ = show_floating_window(&state, &app_handle).await;
     }
 
+    let proxy_mode = app_cfg
+        .get("proxyMode")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    // If proxy mode is disabled, guarantee that the Windows system proxy is reset to disabled
+    // in case of an unclean PC restart or crash from a prior session.
+    if !proxy_mode {
+        disable_sys_proxy_sync(false);
+    }
+
+    let tun_enable = get_controled_mihomo_config(&state, false)
+        .await
+        .ok()
+        .and_then(|c| c.get("tun").and_then(|t| t.get("enable")).and_then(Value::as_bool))
+        .unwrap_or(false);
+
+    // If starting with TUN enabled on boot, give network interface up to 5s to acquire an IP
+    if tun_enable {
+        for _ in 0..10 {
+            if crate::sys::misc::has_active_network_interface() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
     let _ = start_core(&state, Some(&app_handle)).await;
     init_profile_updater(&state, Some(&app_handle)).await;
 
@@ -427,13 +469,14 @@ pub fn run() {
         .expect("error while building Nullex Tauri application")
         .run(move |app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
+                // Synchronously disable system proxy unconditionally on any exit/shutdown event
+                disable_sys_proxy_sync(false);
                 if !state_exit.is_quitting.swap(true, Ordering::SeqCst) {
                     let st = state_exit.clone();
                     let ah = app_handle.clone();
                     tauri::async_runtime::block_on(async move {
                         let _ = stop_core(&st, Some(&ah)).await;
                     });
-                    disable_sys_proxy_sync(false);
                 }
             }
         });
