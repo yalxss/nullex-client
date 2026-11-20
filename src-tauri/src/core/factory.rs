@@ -322,6 +322,46 @@ pub async fn generate_profile(
     let configured_log_level = get_effective_log_level(state).await;
     deep_merge(&mut profile, &controlled);
 
+    // In Mihomo, TUN mode strictly requires internal DNS resolution (`dns.enable: true`).
+    // If TUN is active, guarantee that `dns.enable: true` is always enforced in the generated config,
+    // and provide safe default nameservers if none exist, preventing complete domain resolution failure.
+    let is_tun_active = profile
+        .get("tun")
+        .and_then(|t| t.get("enable"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    if is_tun_active {
+        if let Some(p_obj) = profile.as_object_mut() {
+            let dns_val = p_obj.entry("dns".to_string()).or_insert_with(|| json!({}));
+            if let Some(dns_obj) = dns_val.as_object_mut() {
+                dns_obj.insert("enable".into(), json!(true));
+                if !dns_obj.contains_key("enhanced-mode") {
+                    dns_obj.insert("enhanced-mode".into(), json!("fake-ip"));
+                }
+                if !dns_obj.contains_key("fake-ip-range") {
+                    dns_obj.insert("fake-ip-range".into(), json!("198.18.0.1/16"));
+                }
+                let needs_nameservers = dns_obj
+                    .get("nameserver")
+                    .and_then(Value::as_array)
+                    .map(|a| a.is_empty())
+                    .unwrap_or(true);
+                if needs_nameservers {
+                    dns_obj.insert(
+                        "nameserver".into(),
+                        json!([
+                            "https://doh.pub/dns-query",
+                            "https://dns.alidns.com/dns-query",
+                            "1.1.1.1",
+                            "8.8.8.8"
+                        ]),
+                    );
+                }
+            }
+        }
+    }
+
     // Apply hosts from appConfig if present
     if control_dns {
         if let Some(hosts_arr) = app_cfg.get("hosts").and_then(Value::as_array) {

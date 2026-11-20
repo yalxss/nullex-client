@@ -105,11 +105,11 @@ pub fn try_decode_base64_utf8(input: &str) -> Option<String> {
         return None;
     }
     let bytes = STANDARD.decode(padded.as_bytes()).ok()?;
-    let decoded = String::from_utf8(bytes).ok()?;
-    if decoded.is_empty() || decoded.contains('\u{FFFD}') {
+    let (decoded, _, had_errors) = encoding_rs::UTF_8.decode(&bytes);
+    if decoded.trim().is_empty() || (had_errors && decoded.chars().filter(|&c| c == '\u{FFFD}').count() > 3) {
         return None;
     }
-    Some(decoded)
+    Some(decoded.into_owned())
 }
 
 fn safe_decode_uri_component(s: &str) -> String {
