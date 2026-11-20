@@ -117,20 +117,40 @@ pub async fn download_and_install_update(
         .and_then(Value::as_array)
         .ok_or_else(|| "No release assets found".to_string())?;
 
-    // Find installer exe asset
+    let target_arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x64"
+    };
+
+    // Find installer exe asset matching current system architecture
     let asset = assets
         .iter()
         .find(|a| {
-            let name = a.get("name").and_then(Value::as_str).unwrap_or("");
-            name.ends_with(".exe") && (name.contains("setup") || name.contains("Setup") || name.contains("Nullex"))
+            let name = a.get("name").and_then(Value::as_str).unwrap_or("").to_ascii_lowercase();
+            if !name.ends_with(".exe") {
+                return false;
+            }
+            if target_arch == "arm64" {
+                (name.contains("arm64") || name.contains("aarch64")) && (name.contains("setup") || name.contains("nullex"))
+            } else {
+                (name.contains("x64") || name.contains("x86_64")) && (name.contains("setup") || name.contains("nullex"))
+            }
         })
         .or_else(|| {
             assets.iter().find(|a| {
-                let name = a.get("name").and_then(Value::as_str).unwrap_or("");
-                name.ends_with(".exe")
+                let name = a.get("name").and_then(Value::as_str).unwrap_or("").to_ascii_lowercase();
+                if !name.ends_with(".exe") {
+                    return false;
+                }
+                if target_arch == "arm64" {
+                    name.contains("arm64") || name.contains("aarch64")
+                } else {
+                    !name.contains("arm64") && !name.contains("aarch64")
+                }
             })
         })
-        .ok_or_else(|| "No matching .exe installer found in release".to_string())?;
+        .ok_or_else(|| format!("No matching .exe installer found in release for architecture {target_arch}"))?;
 
     let download_url = asset
         .get("browser_download_url")

@@ -641,13 +641,28 @@ pub async fn create_profile(
                         continue;
                     }
 
-                    let body = match resp.text().await {
-                        Ok(t) => t,
+                    // Enforce maximum download limit (15 MB) to prevent OOM
+                    const MAX_SUBSCRIPTION_SIZE: usize = 15 * 1024 * 1024;
+                    if let Some(cl) = resp.content_length() {
+                        if cl > MAX_SUBSCRIPTION_SIZE as u64 {
+                            last_err = Some("Subscription exceeds maximum allowed size (15MB)".into());
+                            continue;
+                        }
+                    }
+
+                    let raw_bytes = match resp.bytes().await {
+                        Ok(b) if b.len() > MAX_SUBSCRIPTION_SIZE => {
+                            last_err = Some("Subscription exceeds maximum allowed size (15MB)".into());
+                            continue;
+                        }
+                        Ok(b) => b,
                         Err(e) => {
                             last_err = Some(format!("Failed reading body: {e}"));
                             continue;
                         }
                     };
+
+                    let body = String::from_utf8_lossy(&raw_bytes).to_string();
 
                     if let Ok(yaml) = verify_and_prepare_yaml(&body) {
                         converted_meta = normalize_subscription_to_mihomo_yaml(&body);

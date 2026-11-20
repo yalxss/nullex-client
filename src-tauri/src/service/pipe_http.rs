@@ -6,7 +6,12 @@ use hyper_util::rt::TokioIo;
 use serde_json::Value;
 use std::time::Duration;
 
-static PIPE_MUTEX: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+static PIPE_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+const MAX_CONCURRENT_PIPE_REQUESTS: usize = 12;
+
+fn pipe_semaphore() -> &'static tokio::sync::Semaphore {
+    PIPE_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_PIPE_REQUESTS))
+}
 
 #[cfg(windows)]
 pub async fn open_named_pipe(pipe_path: &str) -> Result<tokio::net::windows::named_pipe::NamedPipeClient, String> {
@@ -72,10 +77,10 @@ pub async fn pipe_request(
     extra_headers: &[(&str, String)],
     timeout_secs: u64,
 ) -> Result<Value, PipeHttpError> {
-    let _lock = PIPE_MUTEX
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await;
+    let _permit = pipe_semaphore()
+        .acquire()
+        .await
+        .map_err(|e| PipeHttpError::Other(format!("Pipe semaphore acquire error: {e}")))?;
 
     let fut = async {
         #[cfg(windows)]
