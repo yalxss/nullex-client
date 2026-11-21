@@ -233,15 +233,27 @@ pub async fn check_tun_status() -> TunStatus {
         }
     }
 
-    // Inspect recent log lines for TUN startup errors
+    // Inspect recent log lines for TUN startup state
     let recent_logs = get_recent_core_logs(60).await;
+    let mut tun_listening_in_logs = false;
     let mut last_tun_error = None;
     for line in recent_logs.iter().rev() {
         let low = line.to_ascii_lowercase();
-        if low.contains("start tun") || low.contains("configure tun") || low.contains("tun listening error") {
-            last_tun_error = Some(line.clone());
-            break;
+        if !tun_listening_in_logs && low.contains("[tun]") && low.contains("listening at") {
+            tun_listening_in_logs = true;
         }
+        if last_tun_error.is_none()
+            && (low.contains("level=error") || low.contains("level=fatal") || low.contains("level=fata"))
+            && (low.contains("tun") || low.contains("wintun") || low.contains("adapter"))
+        {
+            last_tun_error = Some(line.clone());
+        }
+    }
+
+    // If core has confirmed TUN is listening, treat adapter as up even if Windows IP stack is still propagating
+    if !adapter_found && tun_listening_in_logs && last_tun_error.is_none() {
+        adapter_found = true;
+        adapter_name = Some("Meta".into());
     }
 
     // Check for WinDivert conflict

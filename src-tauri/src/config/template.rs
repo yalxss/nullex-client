@@ -23,7 +23,7 @@ pub fn default_app_config() -> Value {
         "proxyMode": false,
         "disableLoopbackDetector": false,
         "disableEmbedCA": false,
-        "disableSystemCA": false,
+        "disableSystemCA": true,
         "disableNftables": false,
         "safePaths": [],
         "disableGPU": false,

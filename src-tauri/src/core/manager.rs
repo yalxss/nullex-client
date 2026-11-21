@@ -527,11 +527,14 @@ fn start_core_locked<'a>(
     {
         cmd.env("DISABLE_EMBED_CA", "true");
     }
-    if app_cfg
+    // On Windows, Go's crypto/x509 calling CertFreeCertificateChain in crypt32.dll
+    // causes fatal access violation crashes (0xc0000005) after sleep/wake.
+    // Defaulting to embedded Mozilla CAs on Windows prevents this completely.
+    let disable_sys_ca = app_cfg
         .get("disableSystemCA")
         .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
+        .unwrap_or(cfg!(windows));
+    if disable_sys_ca {
         cmd.env("DISABLE_SYSTEM_CA", "true");
     }
     if app_cfg

@@ -212,10 +212,6 @@ const Home: React.FC = () => {
   }, [firstGroup])
 
   const handleModeChange = async (targetMode: ConnectionMode): Promise<void> => {
-    if (coreProblem && targetMode !== 'off') {
-      reopenCoreError()
-      return
-    }
     // Allow 'off' to proceed even if connectionMode is 'off' when coreProblem or any mode is active,
     // so user can always forcefully clean up and reset.
     if (targetMode === connectionMode && !coreProblem && targetMode !== 'off') return
@@ -288,12 +284,14 @@ const Home: React.FC = () => {
         // Always restart core when enabling TUN mode on Windows to properly initialize WinTun
         await restartCore()
 
-        // Verify TUN adapter status (wait up to 3s for adapter creation)
-        await new Promise((resolve) => setTimeout(resolve, 1500))
-        let status = await checkTunStatus().catch(() => null)
-        if (status && !status.isUp) {
-          await new Promise((resolve) => setTimeout(resolve, 1500))
+        // Verify TUN adapter status (poll up to ~6.5s for Windows virtual adapter initialization)
+        let status: any = null
+        for (let attempt = 0; attempt < 8; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 800))
           status = await checkTunStatus().catch(() => null)
+          if (status?.isUp) {
+            break
+          }
         }
 
         if (status && !status.isUp) {
