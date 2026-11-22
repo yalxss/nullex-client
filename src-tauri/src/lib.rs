@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 pub mod config;
 pub mod core;
 pub mod desktop;
@@ -62,7 +64,21 @@ fn install_shutdown_hook(hwnd_raw: isize, state: Arc<AppState>) {
         if msg == WM_QUERYENDSESSION {
             if let Some(st) = STATE_PTR.get() {
                 st.is_quitting.store(true, std::sync::atomic::Ordering::SeqCst);
+                let pid = st.core_pid.swap(0, std::sync::atomic::Ordering::SeqCst);
+                if pid > 0 {
+                    use windows_sys::Win32::Foundation::CloseHandle;
+                    use windows_sys::Win32::System::Threading::{
+                        OpenProcess, TerminateProcess,
+                        PROCESS_TERMINATE,
+                    };
+                    let h = OpenProcess(PROCESS_TERMINATE, 0, pid);
+                    if h != std::ptr::null_mut() {
+                        TerminateProcess(h, 1);
+                        CloseHandle(h);
+                    }
+                }
             }
+            disable_sys_proxy_sync(false);
             return 1; // TRUE = allow session to end
         }
         if msg == WM_ENDSESSION {
@@ -71,16 +87,11 @@ fn install_shutdown_hook(hwnd_raw: isize, state: Arc<AppState>) {
                     st.is_quitting.store(true, std::sync::atomic::Ordering::SeqCst);
                     let pid = st.core_pid.swap(0, std::sync::atomic::Ordering::SeqCst);
                     if pid > 0 {
-                        // During WM_ENDSESSION Windows has already started tearing down
-                        // the process environment, so spawning a new process (taskkill.exe)
-                        // fails with 0xc0000142. Use TerminateProcess via Win32 API directly
-                        // — it only uses kernel32.dll which is always available during shutdown.
                         use windows_sys::Win32::Foundation::CloseHandle;
                         use windows_sys::Win32::System::Threading::{
                             OpenProcess, TerminateProcess,
                             PROCESS_TERMINATE,
                         };
-                        // We are already inside `unsafe extern "system"`, no extra unsafe block needed
                         let h = OpenProcess(PROCESS_TERMINATE, 0, pid);
                         if h != std::ptr::null_mut() {
                             TerminateProcess(h, 1);
@@ -89,8 +100,10 @@ fn install_shutdown_hook(hwnd_raw: isize, state: Arc<AppState>) {
                     }
                 }
                 disable_sys_proxy_sync(false);
-                return 0;
+                // Exit immediately so Windows CSRSS tears down cleanly without waiting or showing blocking dialogs
+                std::process::exit(0);
             }
+            return 0;
         }
         let orig = ORIG_PROC.load(std::sync::atomic::Ordering::SeqCst);
         if orig != 0 {

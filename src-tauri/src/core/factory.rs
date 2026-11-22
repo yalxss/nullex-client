@@ -351,8 +351,8 @@ pub async fn generate_profile(
                     dns_obj.insert(
                         "nameserver".into(),
                         json!([
-                            "https://doh.pub/dns-query",
-                            "https://dns.alidns.com/dns-query",
+                            "https://dns.google/dns-query",
+                            "https://cloudflare-dns.com/dns-query",
                             "1.1.1.1",
                             "8.8.8.8"
                         ]),
@@ -404,9 +404,14 @@ pub async fn generate_profile(
         let group_name = p_obj
             .get("proxy-groups")
             .and_then(Value::as_array)
-            .and_then(|arr| arr.first())
-            .and_then(|g| g.get("name"))
-            .and_then(Value::as_str)
+            .and_then(|arr| {
+                arr.iter()
+                    .filter_map(|g| g.get("name").and_then(Value::as_str))
+                    .find(|&n| {
+                        let up = n.to_ascii_uppercase();
+                        up != "DIRECT" && up != "REJECT" && !up.contains("ADBLOCK")
+                    })
+            })
             .unwrap_or("Proxy")
             .to_string();
 

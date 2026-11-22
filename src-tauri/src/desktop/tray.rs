@@ -215,7 +215,7 @@ async fn handle_menu_action(state: &Arc<AppState>, app_handle: &AppHandle, id: &
                     json!({ "tun": { "enable": !current } }),
                 )
                 .await;
-                let _ = mihomo_hot_reload_config(state, Some(app_handle)).await;
+                let _ = crate::core::manager::restart_core(state, Some(app_handle)).await;
                 let _ = app_handle.emit("ipc-controledMihomoConfigUpdated", json!([]));
                 request_tray_menu_update(state, app_handle);
             }

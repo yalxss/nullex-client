@@ -37,7 +37,7 @@ const Tun: React.FC = () => {
     'auto-detect-interface': autoDetectInterface = true,
     'dns-hijack': dnsHijack = ['any:53'],
     'route-exclude-address': routeExcludeAddress = [],
-    'strict-route': strictRoute = false,
+    'strict-route': strictRoute = true,
     'disable-icmp-forwarding': disableIcmpForwarding = false,
     mtu = 1500
   } = tun || {}

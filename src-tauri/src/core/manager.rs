@@ -89,24 +89,19 @@ fn apply_windows_cpu_priority(_pid: u32, _priority: &str) {}
 /// Uses `taskkill /F /T /PID` on Windows for reliable tree termination.
 #[cfg(windows)]
 async fn kill_process_tree_if_alive(pid: u32) {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE};
-    // Check if process is still alive
-    let alive = unsafe {
-        let h = OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if h.is_null() {
-            false
-        } else {
+    if pid == 0 {
+        return;
+    }
+    unsafe {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+        };
+        let h = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if !h.is_null() {
+            TerminateProcess(h, 1);
             CloseHandle(h);
-            true
         }
-    };
-    if alive {
-        let _ = tokio::process::Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
-            .creation_flags(0x0800_0000)
-            .output()
-            .await;
     }
 }
 
@@ -139,7 +134,7 @@ pub async fn kill_orphan_cores(state: &Arc<AppState>) {
     // Collect and kill orphans synchronously (no .await while holding raw handle)
     let killed_pids: Vec<u32> = unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if snapshot.is_null() {
+        if snapshot.is_null() || snapshot == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
             return;
         }
         let mut pids = Vec::new();
@@ -205,7 +200,9 @@ fn create_job_for_child(child_pid: u32) -> Option<isize> {
         SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
-    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_ALL_ACCESS};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_ALL_ACCESS, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    };
 
     unsafe {
         let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
@@ -226,7 +223,12 @@ fn create_job_for_child(child_pid: u32) -> Option<isize> {
             return None;
         }
 
-        let ph = OpenProcess(PROCESS_ALL_ACCESS, 0, child_pid);
+        // AssignProcessToJobObject requires PROCESS_SET_QUOTA | PROCESS_TERMINATE.
+        // Try that first, and fall back to PROCESS_ALL_ACCESS if needed.
+        let mut ph = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, child_pid);
+        if ph.is_null() {
+            ph = OpenProcess(PROCESS_ALL_ACCESS, 0, child_pid);
+        }
         if ph.is_null() {
             CloseHandle(job);
             return None;
@@ -831,8 +833,20 @@ pub fn start_network_detection<'a>(
                     .and_then(Value::as_u64)
                     .unwrap_or(3) as u32;
 
-                let online = tokio::net::TcpStream::connect("1.1.1.1:53").await.is_ok()
-                    || tokio::net::TcpStream::connect("223.5.5.5:53").await.is_ok();
+                let online = tokio::time::timeout(
+                    Duration::from_secs(3),
+                    tokio::net::TcpStream::connect("1.1.1.1:53"),
+                )
+                .await
+                .map(|r| r.is_ok())
+                .unwrap_or(false)
+                    || tokio::time::timeout(
+                        Duration::from_secs(3),
+                        tokio::net::TcpStream::connect("8.8.8.8:53"),
+                    )
+                    .await
+                    .map(|r| r.is_ok())
+                    .unwrap_or(false);
 
                 if online {
                     if state_clone.network_down_handled.swap(false, Ordering::SeqCst) {

@@ -239,6 +239,10 @@ pub async fn download_and_install_update(
         }]),
     );
 
+    // Clean up core and system proxy before installer runs so files are not locked
+    let _ = crate::core::manager::stop_core(state, Some(app_handle)).await;
+    crate::sys::sysproxy::disable_sys_proxy_sync(false);
+
     // Launch installer and exit app
     #[cfg(windows)]
     {

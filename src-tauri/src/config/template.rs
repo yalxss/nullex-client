@@ -47,6 +47,7 @@ pub fn default_controled_mihomo_config() -> Value {
             "allow-private-network": false
         },
         "secret": "",
+        "ipv6": false,
         "mode": "rule",
         "mixed-port": 7897,
         "socks-port": 0,
@@ -72,6 +73,8 @@ pub fn default_controled_mihomo_config() -> Value {
             "auto-route": true,
             "auto-redirect": false,
             "auto-detect-interface": true,
+            "strict-route": true,
+            "endpoint-independent-nat": true,
             "dns-hijack": ["any:53"],
             "route-exclude-address": [
                 "0.0.0.0/8",

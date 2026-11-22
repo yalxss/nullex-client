@@ -35,7 +35,7 @@ pub fn detect_windivert_processes() -> Vec<String> {
         let mut detected = Vec::new();
         unsafe {
             let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-            if snap.is_null() {
+            if snap.is_null() || snap == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
                 return detected;
             }
             let mut entry: PROCESSENTRY32W = std::mem::zeroed();
@@ -93,7 +93,7 @@ pub fn detect_other_vpn_processes() -> Vec<String> {
         let mut detected = Vec::new();
         unsafe {
             let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-            if snap.is_null() {
+            if snap.is_null() || snap == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
                 return detected;
             }
             let mut entry: PROCESSENTRY32W = std::mem::zeroed();
@@ -142,7 +142,7 @@ pub fn get_mihomo_processes() -> Vec<Value> {
         let mut list = Vec::new();
         unsafe {
             let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-            if snap.is_null() {
+            if snap.is_null() || snap == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
                 return list;
             }
             let mut entry: PROCESSENTRY32W = std::mem::zeroed();

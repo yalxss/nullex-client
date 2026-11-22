@@ -148,20 +148,52 @@ pub async fn disable_sys_proxy(state: &Arc<AppState>, only_active_device: bool) 
     run_sparkle_sysproxy(&args).await
 }
 
-pub fn disable_sys_proxy_sync(only_active_device: bool) {
-    let exe = service_path();
-    if !exe.exists() {
-        return;
-    }
-    let mut cmd = std::process::Command::new(&exe);
-    cmd.args(["sysproxy", "disable"]);
-    if only_active_device {
-        cmd.arg("--only-active-device");
-    }
+pub fn disable_sys_proxy_sync(_only_active_device: bool) {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(settings) = hkcu.open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+            KEY_SET_VALUE,
+        ) {
+            let _ = settings.set_value("ProxyEnable", &0u32);
+            let _ = settings.set_value("AutoConfigURL", &"");
+        }
+
+        if let Ok(connections) = hkcu.open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections",
+            winreg::enums::KEY_ALL_ACCESS,
+        ) {
+            for name in ["DefaultConnectionSettings", "SavedLegacySettings"] {
+                if let Ok(mut bytes) = connections.get_raw_value(name) {
+                    if bytes.bytes.len() > 8 {
+                        // Byte 8 is flags: 0x01 = Direct connection (proxy disabled)
+                        bytes.bytes[8] = 0x01;
+                        let _ = connections.set_raw_value(name, &bytes);
+                    }
+                }
+            }
+        }
+
+        unsafe {
+            use windows_sys::Win32::Networking::WinInet::{
+                InternetSetOptionW, INTERNET_OPTION_REFRESH, INTERNET_OPTION_SETTINGS_CHANGED,
+            };
+            InternetSetOptionW(
+                std::ptr::null_mut(),
+                INTERNET_OPTION_SETTINGS_CHANGED,
+                std::ptr::null_mut(),
+                0,
+            );
+            InternetSetOptionW(
+                std::ptr::null_mut(),
+                INTERNET_OPTION_REFRESH,
+                std::ptr::null_mut(),
+                0,
+            );
+        }
     }
-    let _ = cmd.output();
 }
