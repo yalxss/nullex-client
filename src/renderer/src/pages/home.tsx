@@ -281,12 +281,18 @@ const Home: React.FC = () => {
           await patchAppConfig({ proxyMode: false })
         }
         await patchControledMihomoConfig({ tun: { enable: true }, dns: { enable: true } })
-        // Always restart core when enabling TUN mode on Windows to properly initialize WinTun
-        await restartCore()
+        // Use hot reload (like Koala) instead of full restartCore() when just enabling TUN —
+        // restartCore() kills and re-spawns mihomo which takes 3-15s; hot reload is instant.
+        // Only restart when switching FROM proxy→tun (need to tear down sysproxy state first).
+        if (proxyWasEnabled) {
+          await restartCore()
+        } else {
+          await mihomoHotReloadConfig().catch(() => restartCore())
+        }
 
-        // Verify TUN adapter status (poll up to ~6.5s for Windows virtual adapter initialization)
+        // Verify TUN adapter status (poll up to ~4s)
         let status: any = null
-        for (let attempt = 0; attempt < 8; attempt++) {
+        for (let attempt = 0; attempt < 5; attempt++) {
           await new Promise((resolve) => setTimeout(resolve, 800))
           status = await checkTunStatus().catch(() => null)
           if (status?.isUp) {
@@ -304,7 +310,7 @@ const Home: React.FC = () => {
               await triggerSysProxy(true, onlyActiveDevice)
             }
           } else {
-            await restartCore()
+            await mihomoHotReloadConfig().catch(() => restartCore())
           }
 
           const errMsg = status.errorMessage || (isRu ? 'TUN адаптер не запустился' : 'TUN adapter failed to start')

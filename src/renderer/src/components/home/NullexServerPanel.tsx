@@ -18,7 +18,7 @@ import {
   Zap
 } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
-import { mihomoChangeProxy, mihomoGroupDelay, mihomoProxyDelay } from '@renderer/utils/ipc'
+import { mihomoChangeProxy, mihomoCloseAllConnections, mihomoGroupDelay, mihomoProxyDelay } from '@renderer/utils/ipc'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import { useGroups } from '@renderer/hooks/use-groups'
 import { useProfileConfig } from '@renderer/hooks/use-profile-config'
@@ -103,6 +103,8 @@ export const NullexServerPanel: React.FC<NullexServerPanelProps> = ({
   const handleSelectProxy = async (groupName: string, proxyName: string): Promise<void> => {
     try {
       await mihomoChangeProxy(groupName, proxyName)
+      await mihomoCloseAllConnections()
+      await new Promise((resolve) => setTimeout(resolve, 150))
       mutate()
     } catch (e) {
       toast.error(`${e}`)

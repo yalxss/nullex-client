@@ -186,8 +186,13 @@ const Proxies: React.FC = () => {
     async (group: string, proxy: string): Promise<void> => {
       await mihomoChangeProxy(group, proxy)
       if (autoCloseConnection) {
-        await mihomoCloseAllConnections(group)
+        // Close ALL connections (not just this group) so traffic on keep-alive
+        // sockets from other groups also re-routes through the new proxy immediately.
+        await mihomoCloseAllConnections()
       }
+      // Give Mihomo a moment to apply the proxy switch before re-fetching groups,
+      // otherwise mutate() may read stale state from the core.
+      await new Promise((resolve) => setTimeout(resolve, 150))
       mutate()
     },
     [autoCloseConnection, mutate]

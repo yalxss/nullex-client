@@ -7,7 +7,7 @@ import {
 } from '@renderer/components/ui/dialog'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import { useGroups } from '@renderer/hooks/use-groups'
-import { mihomoChangeProxy, mihomoGroupDelay } from '@renderer/utils/ipc'
+import { mihomoChangeProxy, mihomoCloseAllConnections, mihomoGroupDelay } from '@renderer/utils/ipc'
 import { Search, Zap, Check, Activity, Globe, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@renderer/lib/utils'
@@ -43,6 +43,8 @@ export const QuickServerModal: React.FC<QuickServerModalProps> = ({ open, onClos
     if (!primaryGroup) return
     try {
       await mihomoChangeProxy(primaryGroup.name, proxyName)
+      await mihomoCloseAllConnections()
+      await new Promise((resolve) => setTimeout(resolve, 150))
       mutate()
       onClose()
     } catch (e) {

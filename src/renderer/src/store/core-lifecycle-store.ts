@@ -1,5 +1,25 @@
 import { create } from 'zustand'
-import { getCoreState } from '@renderer/utils/ipc'
+import { getCoreState, mihomoGroups } from '@renderer/utils/ipc'
+
+// Wait until mihomo has fully loaded all proxy providers / groups (or timeout).
+// Mihomo emits "RESTful API listening" immediately but loads remote proxy-providers
+// asynchronously — groups are empty until all providers finish loading.
+// Without this wait the UI shows VPN as "connected" but traffic doesn't route.
+const waitForGroupsReady = async (maxAttempts = 15, intervalMs = 500): Promise<void> => {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const groups = await mihomoGroups()
+      // Consider ready when at least one group has proxies loaded
+      if (Array.isArray(groups) && groups.length > 0 && groups.some((g) => g.all?.length > 0)) {
+        return
+      }
+    } catch {
+      // API not ready yet — keep polling
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs))
+  }
+  // Timed out — proceed anyway so the UI doesn't freeze
+}
 
 interface CoreLifecycleStore {
   startedAt: number
@@ -41,7 +61,11 @@ export const attachCoreLifecycleStore = (): (() => void) => {
   attached = true
 
   ipcListener = (): void => {
-    useCoreLifecycleStore.setState({ startedAt: Date.now() })
+    // Wait for mihomo to finish loading proxy providers before marking core as started.
+    // Without this, logs are empty and traffic doesn't route for ~30-60s after enabling VPN.
+    waitForGroupsReady().then(() => {
+      useCoreLifecycleStore.setState({ startedAt: Date.now() })
+    })
   }
   window.electron.ipcRenderer.on('core-started', ipcListener)
 
