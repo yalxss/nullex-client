@@ -98,7 +98,14 @@ pub async fn get_app_config(state: &Arc<AppState>, force: bool) -> Result<Value,
                 decrypt_config(backup.unwrap_or_else(default_app_config))
             }
         },
-        Err(_) => default_app_config(),
+        Err(_) => {
+            let backup = tokio::fs::read_to_string(path.with_extension("yaml.backup"))
+                .await
+                .ok()
+                .and_then(|b| parse_yaml_to_json(&b).ok())
+                .filter(is_valid_config);
+            decrypt_config(backup.unwrap_or_else(default_app_config))
+        }
     };
 
     *state.app_config.write().await = Some(loaded.clone());

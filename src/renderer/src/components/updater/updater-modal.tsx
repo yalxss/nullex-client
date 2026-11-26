@@ -42,15 +42,19 @@ const UpdaterModal: React.FC<Props> = (props) => {
       setDownloading(true)
       await downloadAndInstallUpdate(version)
     } catch (e) {
-      toast.error(`${e}`)
+      const msg = String(e)
+      if (!msg.toLowerCase().includes('cancelled')) {
+        toast.error(msg)
+      }
       setDownloading(false)
     }
   }
   const handleCancel = (): void => {
-    if (updateStatus?.downloading && onCancel) {
+    if ((updateStatus?.downloading || downloading) && onCancel) {
       setDownloading(false)
       onCancel()
     } else {
+      setDownloading(false)
       closeWithAnimation()
     }
   }
@@ -80,7 +84,7 @@ const UpdaterModal: React.FC<Props> = (props) => {
               variant="outline"
               className="app-nodrag"
               onClick={() => {
-                open(`https://github.com/nexott/nullex-client/releases/tag/${version}`)
+                open(`https://github.com/yalxss/nullex-client/releases/tag/${version}`)
               }}
             >
               {t('updater.goToDownload')}

@@ -86,7 +86,8 @@ pub async fn auto_update_profile(
             {
                 items[pos] = created.clone();
             } else {
-                items.push(created.clone());
+                // Profile was deleted while update was downloading — do not resurrect it
+                return Ok(());
             }
 
             if current.as_deref() == Some(id) {

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU16, AtomicU32, AtomicU64};
 use std::sync::Arc;
 use tokio::process::Child;
@@ -83,11 +83,13 @@ pub struct AppState {
     pub pac_shutdown: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 
     pub streams: Mutex<StreamHandles>,
+    pub log_buffer: std::sync::Mutex<VecDeque<Value>>,
     pub network_detect_abort: Mutex<Option<tokio::task::AbortHandle>>,
     pub network_down_handled: AtomicBool,
 
     pub needs_first_run_admin: AtomicBool,
     pub is_quitting: AtomicBool,
+    pub keep_core_on_exit: AtomicBool,
     pub not_quit_dialog: AtomicBool,
     pub last_quit_attempt_ms: AtomicI64,
 
@@ -130,10 +132,12 @@ impl Default for AppState {
             pac_port: AtomicU16::new(0),
             pac_shutdown: Mutex::new(None),
             streams: Mutex::new(StreamHandles::default()),
+            log_buffer: std::sync::Mutex::new(VecDeque::with_capacity(500)),
             network_detect_abort: Mutex::new(None),
             network_down_handled: AtomicBool::new(false),
             needs_first_run_admin: AtomicBool::new(false),
             is_quitting: AtomicBool::new(false),
+            keep_core_on_exit: AtomicBool::new(false),
             not_quit_dialog: AtomicBool::new(false),
             last_quit_attempt_ms: AtomicI64::new(0),
             core_job: Mutex::new(None),

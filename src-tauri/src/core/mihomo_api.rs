@@ -56,6 +56,31 @@ pub async fn patch_mihomo_config(patch: Value) -> Result<(), String> {
     Ok(())
 }
 
+const MAX_LOG_BUFFER: usize = 500;
+
+fn append_buffered_log(state: &AppState, entry: Value) {
+    if let Ok(mut buf) = state.log_buffer.lock() {
+        if buf.len() >= MAX_LOG_BUFFER {
+            buf.pop_front();
+        }
+        buf.push_back(entry);
+    }
+}
+
+pub fn clear_buffered_logs(state: &AppState) {
+    if let Ok(mut buf) = state.log_buffer.lock() {
+        buf.clear();
+    }
+}
+
+pub fn get_buffered_logs(state: &AppState) -> Vec<Value> {
+    state
+        .log_buffer
+        .lock()
+        .map(|buf| buf.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
 pub async fn apply_log_level(
     state: &Arc<AppState>,
     app_handle: Option<&AppHandle>,
@@ -68,7 +93,13 @@ pub async fn apply_log_level(
     };
     patch_mihomo_config(json!({ "log-level": target })).await?;
     if let Some(handle) = app_handle {
-        restart_logs_stream(state, handle, target).await;
+        let needs_restart = {
+            let handles = state.streams.lock().await;
+            handles.logs_abort.is_none() || handles.logs_level != target
+        };
+        if needs_restart {
+            restart_logs_stream(state, handle, target).await;
+        }
     }
     Ok(())
 }
@@ -218,7 +249,13 @@ pub async fn mihomo_proxy_delay(
     let test_url = url
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .or_else(|| app_cfg.get("delayTestUrl").and_then(Value::as_str))
+        .or_else(|| {
+            app_cfg
+                .get("delayTestUrl")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
         .unwrap_or("https://www.gstatic.com/generate_204");
 
     let enc_proxy = urlencoding::encode(proxy);
@@ -261,7 +298,13 @@ pub async fn mihomo_group_delay(
     let test_url = url
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .or_else(|| app_cfg.get("delayTestUrl").and_then(Value::as_str))
+        .or_else(|| {
+            app_cfg
+                .get("delayTestUrl")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
         .unwrap_or("https://www.gstatic.com/generate_204");
 
     let enc_group = urlencoding::encode(group);
@@ -374,7 +417,15 @@ pub async fn mihomo_groups(state: &Arc<AppState>) -> Result<Value, String> {
                                 m.entry("provider-name".to_string())
                                     .or_insert_with(|| json!(prov_name));
                             }
-                            all_nodes.entry(name.to_string()).or_insert(node);
+                            all_nodes
+                                .entry(name.to_string())
+                                .and_modify(|existing| {
+                                    if let Some(m) = existing.as_object_mut() {
+                                        m.entry("provider-name".to_string())
+                                            .or_insert_with(|| json!(prov_name));
+                                    }
+                                })
+                                .or_insert(node);
                         }
                     }
                 }
@@ -540,7 +591,9 @@ where
 
 fn spawn_connections_stream(app_handle: &AppHandle) -> tokio::task::AbortHandle {
     let app_c = app_handle.clone();
-    let mut last_conn_emit = Instant::now() - Duration::from_millis(200);
+    let mut last_conn_emit = Instant::now()
+        .checked_sub(Duration::from_millis(200))
+        .unwrap_or_else(Instant::now);
     let connections_task = tokio::spawn(async move {
         run_ws_loop("/connections".to_string(), move |txt| {
             if last_conn_emit.elapsed() < Duration::from_millis(100) {
@@ -602,7 +655,7 @@ pub async fn start_mihomo_streams(
         }
     };
 
-    let logs_task = spawn_logs_stream(app_handle, &log_level);
+    let logs_task = spawn_logs_stream(state, app_handle, &log_level);
 
     let mut handles = state.streams.lock().await;
     handles.traffic_abort = Some(traffic_task.abort_handle());
@@ -614,8 +667,13 @@ pub async fn start_mihomo_streams(
     handles.logs_level = log_level;
 }
 
-fn spawn_logs_stream(app_handle: &AppHandle, level: &str) -> tokio::task::AbortHandle {
+fn spawn_logs_stream(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    level: &str,
+) -> tokio::task::AbortHandle {
     let app_l = app_handle.clone();
+    let state_l = state.clone();
     let lvl = if level.trim().is_empty() {
         "info".to_string()
     } else {
@@ -632,6 +690,7 @@ fn spawn_logs_stream(app_handle: &AppHandle, level: &str) -> tokio::task::AbortH
                         );
                     }
                 }
+                append_buffered_log(&state_l, val.clone());
                 let _ = app_l.emit("ipc-mihomoLogs", json!([val]));
             }
         })
@@ -649,7 +708,7 @@ pub async fn restart_logs_stream(
     if let Some(abort) = handles.logs_abort.take() {
         abort.abort();
     }
-    handles.logs_abort = Some(spawn_logs_stream(app_handle, &log_level));
+    handles.logs_abort = Some(spawn_logs_stream(state, app_handle, &log_level));
     handles.logs_level = log_level;
 }
 

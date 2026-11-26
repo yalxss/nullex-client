@@ -93,6 +93,18 @@ fn startup_log_level(configured: &str) -> String {
     }
 }
 
+fn parse_rule_with_offset(raw: &str) -> (Option<usize>, String) {
+    if let Some((prefix, rest)) = raw.split_once(',') {
+        let trimmed = prefix.trim();
+        if !trimmed.is_empty() && trimmed.bytes().all(|b| b.is_ascii_digit()) {
+            if let Ok(offset) = trimmed.parse::<usize>() {
+                return (Some(offset), rest.trim_start().to_string());
+            }
+        }
+    }
+    (None, raw.to_string())
+}
+
 fn apply_rule_overrides(profile: &mut Value, profile_id: &str) {
     let r_path = rule_path(profile_id);
     if !r_path.exists() {
@@ -144,10 +156,39 @@ fn apply_rule_overrides(profile: &mut Value, profile_id: &str) {
         .cloned()
         .unwrap_or_default();
 
-    let mut combined = Vec::with_capacity(prepend.len() + existing.len() + append.len());
-    combined.extend(prepend);
+    let mut prepend_head = Vec::new();
+    let mut prepend_offset = Vec::new();
+    for item in prepend {
+        if let Some(s) = item.as_str() {
+            match parse_rule_with_offset(s) {
+                (Some(off), clean) if off > 0 => prepend_offset.push((off, Value::String(clean))),
+                (_, clean) => prepend_head.push(Value::String(clean)),
+            }
+        } else {
+            prepend_head.push(item);
+        }
+    }
+
+    let mut combined = Vec::with_capacity(prepend_head.len() + prepend_offset.len() + existing.len() + append.len());
+    combined.extend(prepend_head);
     combined.extend(existing);
-    combined.extend(append);
+    for (off, val) in prepend_offset {
+        let pos = off.min(combined.len());
+        combined.insert(pos, val);
+    }
+    for item in append {
+        if let Some(s) = item.as_str() {
+            match parse_rule_with_offset(s) {
+                (Some(off), clean) if off > 0 => {
+                    let pos = combined.len().saturating_sub(off);
+                    combined.insert(pos, Value::String(clean));
+                }
+                (_, clean) => combined.push(Value::String(clean)),
+            }
+        } else {
+            combined.push(item);
+        }
+    }
     p_obj.insert("rules".into(), Value::Array(combined));
 }
 
@@ -401,7 +442,7 @@ pub async fn generate_profile(
         .unwrap_or(true);
 
     if let Some(p_obj) = profile.as_object_mut() {
-        let group_name = p_obj
+        let group_name: Option<String> = p_obj
             .get("proxy-groups")
             .and_then(Value::as_array)
             .and_then(|arr| {
@@ -412,8 +453,7 @@ pub async fn generate_profile(
                         up != "DIRECT" && up != "REJECT" && !up.contains("ADBLOCK")
                     })
             })
-            .unwrap_or("Proxy")
-            .to_string();
+            .map(str::to_string);
 
         if let Some(rules_arr) = p_obj.get_mut("rules").and_then(Value::as_array_mut) {
             if block_quic {
@@ -423,17 +463,19 @@ pub async fn generate_profile(
                 }
             }
 
-            let tg_site = json!(format!("GEOSITE,telegram,{group_name}"));
-            let tg_ip = json!(format!("GEOIP,telegram,{group_name},no-resolve"));
-            let discord_site = json!(format!("GEOSITE,discord,{group_name}"));
+            if let Some(group_name) = group_name {
+                let tg_site = json!(format!("GEOSITE,telegram,{group_name}"));
+                let tg_ip = json!(format!("GEOIP,telegram,{group_name},no-resolve"));
+                let discord_site = json!(format!("GEOSITE,discord,{group_name}"));
 
-            for rule in [tg_site, tg_ip, discord_site] {
-                if !rules_arr.contains(&rule) {
-                    let match_idx = rules_arr
-                        .iter()
-                        .position(|r| r.as_str().map(|s| s.starts_with("MATCH,")).unwrap_or(false))
-                        .unwrap_or(rules_arr.len());
-                    rules_arr.insert(match_idx, rule);
+                for rule in [tg_site, tg_ip, discord_site] {
+                    if !rules_arr.contains(&rule) {
+                        let match_idx = rules_arr
+                            .iter()
+                            .position(|r| r.as_str().map(|s| s.starts_with("MATCH,")).unwrap_or(false))
+                            .unwrap_or(rules_arr.len());
+                        rules_arr.insert(match_idx, rule);
+                    }
                 }
             }
         }

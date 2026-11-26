@@ -44,7 +44,7 @@ import {
   getEffectiveLogLevel,
   mihomoApplyLogLevel
 } from '@renderer/utils/ipc'
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import useSWR from 'swr'
 import ControllerSetting from '@renderer/components/mihomo/controller-setting'
 import EnvSetting from '@renderer/components/mihomo/env-setting'
@@ -77,6 +77,11 @@ const Mihomo: React.FC = () => {
   const [showServiceModal, setShowServiceModal] = useState(false)
   const [pendingPermissionMode, setPendingPermissionMode] = useState<string>('')
   const [downloadingAlpha, setDownloadingAlpha] = useState(false)
+  const [logDaysInput, setLogDaysInput] = useState(String(maxLogDays ?? 7))
+
+  useEffect(() => {
+    setLogDaysInput(String(maxLogDays ?? 7))
+  }, [maxLogDays])
   // Picking the alpha core before it is downloaded only offers the download, the running core stays
   const [pendingAlpha, setPendingAlpha] = useState(false)
   const { data: cores, mutate: mutateCores } = useSWR('installedCores', installedCores)
@@ -414,10 +419,15 @@ const Mihomo: React.FC = () => {
           <Input
             type="number"
             className="h-8 w-[100px]"
-            value={maxLogDays.toString()}
-            onChange={(event) =>
-              patchAppConfig({ maxLogDays: parseInt(event.target.value) })
-            }
+            value={logDaysInput}
+            onChange={(event) => {
+              const raw = event.target.value
+              setLogDaysInput(raw)
+              const parsed = parseInt(raw, 10)
+              if (!Number.isNaN(parsed) && parsed >= 1) {
+                patchAppConfig({ maxLogDays: parsed })
+              }
+            }}
           />
         </SettingItem>
         <SettingItem
@@ -434,7 +444,7 @@ const Mihomo: React.FC = () => {
           actions={
             logLevelInfo &&
             !logLevelInfo.fromProfile &&
-            logLevelInfo.profileValue !== undefined && (
+            logLevelInfo.profileValue != null && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button size="icon-sm" variant="ghost" onClick={onLogLevelReset}>

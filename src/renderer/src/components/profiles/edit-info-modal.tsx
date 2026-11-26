@@ -331,10 +331,11 @@ const EditInfoModal: React.FC<Props> = (props) => {
                         <Input
                           type="number"
                           className="h-8 w-24"
-                          value={values.interval?.toString() ?? ''}
-                          onChange={(e) =>
-                            setValues({ ...values, interval: parseInt(e.target.value) })
-                          }
+                          value={values.interval !== undefined && Number.isFinite(values.interval) ? values.interval.toString() : ''}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10)
+                            setValues({ ...values, interval: Number.isNaN(val) ? undefined : val })
+                          }}
                           disabled={values.locked}
                         />
                       </SettingItem>
@@ -417,10 +418,11 @@ const EditInfoModal: React.FC<Props> = (props) => {
                     <Input
                       type="number"
                       className="h-8 w-24"
-                      value={values.interval?.toString() ?? ''}
-                      onChange={(e) =>
-                        setValues({ ...values, interval: parseInt(e.target.value) })
-                      }
+                      value={values.interval !== undefined && Number.isFinite(values.interval) ? values.interval.toString() : ''}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10)
+                        setValues({ ...values, interval: Number.isNaN(val) ? undefined : val })
+                      }}
                       disabled={values.locked}
                     />
                   </SettingItem>

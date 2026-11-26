@@ -63,6 +63,7 @@ export const NullexServerPanel: React.FC<NullexServerPanelProps> = ({
   const isRu = i18n.language.toLowerCase().startsWith('ru')
   const { appConfig, patchAppConfig } = useAppConfig()
   const delayTestMode = appConfig?.delayTestMode ?? 'url'
+  const autoCloseConnection = appConfig?.autoCloseConnection ?? true
   const { groups = [], mutate } = useGroups()
   const { profileConfig, changeCurrentProfile } = useProfileConfig()
 
@@ -103,7 +104,9 @@ export const NullexServerPanel: React.FC<NullexServerPanelProps> = ({
   const handleSelectProxy = async (groupName: string, proxyName: string): Promise<void> => {
     try {
       await mihomoChangeProxy(groupName, proxyName)
-      await mihomoCloseAllConnections()
+      if (autoCloseConnection) {
+        await mihomoCloseAllConnections().catch(() => {})
+      }
       await new Promise((resolve) => setTimeout(resolve, 150))
       mutate()
     } catch (e) {
@@ -115,10 +118,7 @@ export const NullexServerPanel: React.FC<NullexServerPanelProps> = ({
     if (!primaryGroup || testingGroup) return
     setTestingGroup(true)
     try {
-      await mihomoGroupDelay(
-        primaryGroup.name,
-        primaryGroup.testUrl || 'http://cp.cloudflare.com'
-      )
+      await mihomoGroupDelay(primaryGroup.name, primaryGroup.testUrl || undefined)
       mutate()
     } catch (e) {
       toast.error(`${e}`)
@@ -130,17 +130,18 @@ export const NullexServerPanel: React.FC<NullexServerPanelProps> = ({
   const handlePingSingle = async (
     e: React.MouseEvent,
     proxyName: string,
-    testUrl?: string
+    testUrl?: string,
+    provider?: string
   ): Promise<void> => {
     e.stopPropagation()
     if (testingNodeMap[proxyName]) return
     setTestingNodeMap((prev) => ({ ...prev, [proxyName]: true }))
     try {
-      await mihomoProxyDelay(proxyName, testUrl || 'http://cp.cloudflare.com')
-      mutate()
+      await mihomoProxyDelay(proxyName, testUrl || undefined, provider)
     } catch {
       // ignore timeout
     } finally {
+      mutate()
       setTestingNodeMap((prev) => ({ ...prev, [proxyName]: false }))
     }
   }
@@ -320,7 +321,7 @@ export const NullexServerPanel: React.FC<NullexServerPanelProps> = ({
                     </div>
                   </div>
                 )}
-                {currentProfile.supportUrl && (
+                {currentProfile.supportUrl && /^https?:\/\//i.test(currentProfile.supportUrl) && (
                   <button
                     type="button"
                     data-guide="home-support-link"
@@ -446,7 +447,16 @@ export const NullexServerPanel: React.FC<NullexServerPanelProps> = ({
                           {/* Right Latency Indicator */}
                           <button
                             type="button"
-                            onClick={(e) => handlePingSingle(e, proxy.name, group.testUrl)}
+                            onClick={(e) =>
+                              handlePingSingle(
+                                e,
+                                proxy.name,
+                                group.testUrl,
+                                'provider-name' in proxy
+                                  ? (proxy['provider-name'] as string | undefined)
+                                  : undefined
+                              )
+                            }
                             title={t('sider.delayTest')}
                             className={cn(
                               'shrink-0 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums hover:bg-white/10 transition-colors cursor-pointer',

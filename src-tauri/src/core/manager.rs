@@ -1,8 +1,10 @@
 use crate::config::app::get_app_config;
+use crate::config::mihomo::{get_controled_mihomo_config, patch_controled_mihomo_config};
 use crate::config::profile::get_profile_config;
 use crate::core::factory::generate_profile;
 use crate::core::mihomo_api::{
-    apply_log_level, mihomo_version, start_mihomo_streams, stop_mihomo_streams,
+    clear_buffered_logs, mihomo_version, patch_mihomo_config, start_mihomo_streams,
+    stop_mihomo_streams,
 };
 use crate::service::manager::{service_api_post, test_service_connection};
 use crate::state::{AppState, CoreErrorPayload, CoreStatePayload};
@@ -15,7 +17,7 @@ use crate::utils::elevation::is_running_as_admin;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -125,10 +127,15 @@ pub async fn kill_orphan_cores(state: &Arc<AppState>) {
         PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
     };
 
-    let our_sidecar = match crate::utils::dirs::mihomo_core_path("mihomo") {
-        Ok(p) => p.to_string_lossy().to_ascii_lowercase(),
-        Err(_) => return,
-    };
+    let our_sidecar = mihomo_core_path("mihomo")
+        .map(|p| p.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    let our_alpha = mihomo_core_path("mihomo-alpha")
+        .map(|p| p.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if our_sidecar.is_empty() && our_alpha.is_empty() {
+        return;
+    }
     let managed_pid = state.core_pid.load(Ordering::SeqCst);
 
     // Collect and kill orphans synchronously (no .await while holding raw handle)
@@ -148,7 +155,7 @@ pub async fn kill_orphan_cores(state: &Arc<AppState>) {
                     .to_string_lossy()
                     .to_ascii_lowercase();
 
-                if name == "mihomo.exe" {
+                if name == "mihomo.exe" || name == "mihomo-alpha.exe" {
                     let pid = entry.th32ProcessID;
                     if pid != managed_pid || managed_pid == 0 {
                         let ph = OpenProcess(
@@ -163,7 +170,11 @@ pub async fn kill_orphan_cores(state: &Arc<AppState>) {
                                 let full_path = OsString::from_wide(&buf[..sz as usize])
                                     .to_string_lossy()
                                     .to_ascii_lowercase();
-                                if full_path == our_sidecar || full_path.ends_with(r"\resources\sidecar\mihomo.exe") {
+                                if (!our_sidecar.is_empty() && full_path == our_sidecar)
+                                    || (!our_alpha.is_empty() && full_path == our_alpha)
+                                    || full_path.ends_with(r"\resources\sidecar\mihomo.exe")
+                                    || full_path.ends_with(r"\resources\sidecar\mihomo-alpha.exe")
+                                {
                                     TerminateProcess(ph, 1);
                                     pids.push(pid);
                                 }
@@ -339,7 +350,7 @@ async fn stop_core_inner(state: &Arc<AppState>, app_handle: Option<&AppHandle>) 
     }
 
     // ── Verify the process is actually gone; if not, force-kill ─────────────
-    if pid > 0 {
+    if pid > 1 {
         kill_process_tree_if_alive(pid).await;
     }
 
@@ -374,6 +385,14 @@ pub async fn restart_core(
 ) -> Result<(), String> {
     let _guard = core_op_lock().lock().await;
     state.core_retry.store(0, Ordering::SeqCst);
+    start_core_locked(state, app_handle).await
+}
+
+async fn restart_core_from_watcher(
+    state: &Arc<AppState>,
+    app_handle: Option<&AppHandle>,
+) -> Result<(), String> {
+    let _guard = core_op_lock().lock().await;
     start_core_locked(state, app_handle).await
 }
 
@@ -554,6 +573,8 @@ fn start_core_locked<'a>(
         }
     }
 
+    clear_buffered_logs(state);
+
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -589,16 +610,78 @@ fn start_core_locked<'a>(
 
     let ready_notify = Arc::new(Notify::new());
     let fatal_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let tun_handled = Arc::new(AtomicBool::new(false));
+
+    fn is_tun_failure_line(line: &str) -> bool {
+        let low = line.to_ascii_lowercase();
+        low.contains("start tun listening error")
+            || low.contains("configure tun interface")
+            || (low.contains("wintun")
+                && (low.contains("level=error")
+                    || low.contains("level=fatal")
+                    || low.contains("level=fata")
+                    || low.contains("access is denied")
+                    || low.contains("operation not permitted")))
+    }
+
+    fn spawn_tun_error_handler(
+        state: Arc<AppState>,
+        app_handle: Option<AppHandle>,
+        watched_pid: u32,
+        err_line: String,
+    ) {
+        tokio::spawn(async move {
+            if state.is_quitting.load(Ordering::SeqCst)
+                || state.core_pid.load(Ordering::SeqCst) != watched_pid
+            {
+                return;
+            }
+            let tun_enabled = get_controled_mihomo_config(&state, false)
+                .await
+                .ok()
+                .and_then(|c| c.get("tun").and_then(|t| t.get("enable")).and_then(Value::as_bool))
+                .unwrap_or(false);
+            if !tun_enabled {
+                return;
+            }
+            let _ = patch_controled_mihomo_config(
+                &state,
+                app_handle.as_ref(),
+                json!({ "tun": { "enable": false } }),
+            )
+            .await;
+            if let Some(ref handle) = app_handle {
+                let _ = handle.emit("ipc-controledMihomoConfigUpdated", json!([]));
+                crate::desktop::tray::request_tray_menu_update(&state, handle);
+            }
+            set_core_state(
+                &state,
+                app_handle.as_ref(),
+                "error",
+                Some(CoreErrorPayload {
+                    reason: "tun_error".into(),
+                    message: err_line,
+                }),
+            )
+            .await;
+        });
+    }
 
     if let Some(stdout) = child.stdout.take() {
         let rn = ready_notify.clone();
         let fe = fatal_error.clone();
+        let st_out = state.clone();
+        let ah_out = app_handle.cloned();
+        let th_out = tun_handled.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             let mut notified = false;
             while let Ok(Some(line)) = lines.next_line().await {
                 append_core_log_line(&line).await;
                 let low = line.to_ascii_lowercase();
+                if is_tun_failure_line(&line) && !th_out.swap(true, Ordering::SeqCst) {
+                    spawn_tun_error_handler(st_out.clone(), ah_out.clone(), pid, line.clone());
+                }
                 if (low.contains("controller pipe listen error") || low.contains("level=fatal")) && !notified {
                     let mut guard = fe.lock().await;
                     if guard.is_none() {
@@ -621,15 +704,24 @@ fn start_core_locked<'a>(
                     rn.notify_one();
                 }
             }
+            if !notified {
+                rn.notify_one();
+            }
         });
     }
 
     if let Some(stderr) = child.stderr.take() {
         let fe = fatal_error.clone();
+        let st_err = state.clone();
+        let ah_err = app_handle.cloned();
+        let th_err = tun_handled.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 append_core_log_line(&format!("[STDERR] {line}")).await;
+                if is_tun_failure_line(&line) && !th_err.swap(true, Ordering::SeqCst) {
+                    spawn_tun_error_handler(st_err.clone(), ah_err.clone(), pid, line.clone());
+                }
                 let mut guard = fe.lock().await;
                 if guard.is_none() && !line.trim().is_empty() {
                     *guard = Some(line);
@@ -640,12 +732,12 @@ fn start_core_locked<'a>(
 
     *state.core_child.lock().await = Some(child);
 
-    // Wait briefly for stdout signal OR successful Named Pipe /version handshake (up to 6s)
+    // Wait for stdout signal OR successful Named Pipe /version handshake (up to 20s for cold boot)
     let state_poll = state.clone();
     let pipe_ready = ready_notify.clone();
     tokio::spawn(async move {
-        for _ in 0..40 {
-            if state_poll.core_pid.load(Ordering::SeqCst) == 0 {
+        for _ in 0..180 {
+            if state_poll.core_pid.load(Ordering::SeqCst) != pid || pid == 0 {
                 return;
             }
             if mihomo_version().await.is_ok() {
@@ -656,7 +748,7 @@ fn start_core_locked<'a>(
         }
     });
 
-    let _ = tokio::time::timeout(Duration::from_secs(6), ready_notify.notified()).await;
+    let _ = tokio::time::timeout(Duration::from_secs(20), ready_notify.notified()).await;
 
     // Confirm process hasn't crashed immediately
     let still_alive = {
@@ -707,12 +799,19 @@ async fn on_core_ready(
     app_handle: Option<&AppHandle>,
     configured_log_level: String,
 ) {
-    let _ = apply_log_level(state, app_handle, &configured_log_level).await;
-    set_core_state(state, app_handle, "running", None).await;
-    state.core_retry.store(0, Ordering::SeqCst);
+    let target_level = if configured_log_level.trim().is_empty() {
+        "info".to_string()
+    } else {
+        configured_log_level.trim().to_string()
+    };
+    let _ = patch_mihomo_config(json!({ "log-level": target_level })).await;
+
+    if get_core_state(state).await.error.is_none() {
+        set_core_state(state, app_handle, "running", None).await;
+    }
 
     if let Some(handle) = app_handle {
-        start_mihomo_streams(state, handle, configured_log_level).await;
+        start_mihomo_streams(state, handle, target_level).await;
         let _ = handle.emit("ipc-core-started", json!([]));
         let _ = handle.emit("ipc-groupsUpdated", json!([]));
         let _ = handle.emit("ipc-rulesUpdated", json!([]));
@@ -784,7 +883,12 @@ fn spawn_exit_watcher(state: Arc<AppState>, app_handle: Option<AppHandle>, watch
                     ))
                     .await;
                     tokio::time::sleep(Duration::from_millis(500)).await;
-                    let _ = restart_core(&state, app_handle.as_ref()).await;
+                    if state.is_quitting.load(Ordering::SeqCst)
+                        || state.core_pid.load(Ordering::SeqCst) != watched_pid
+                    {
+                        return;
+                    }
+                    let _ = restart_core_from_watcher(&state, app_handle.as_ref()).await;
                 } else {
                     state.core_pid.store(0, Ordering::SeqCst);
                     set_core_state(

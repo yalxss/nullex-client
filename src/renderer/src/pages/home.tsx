@@ -284,10 +284,22 @@ const Home: React.FC = () => {
         // Use hot reload (like Koala) instead of full restartCore() when just enabling TUN —
         // restartCore() kills and re-spawns mihomo which takes 3-15s; hot reload is instant.
         // Only restart when switching FROM proxy→tun (need to tear down sysproxy state first).
-        if (proxyWasEnabled) {
-          await restartCore()
-        } else {
-          await mihomoHotReloadConfig().catch(() => restartCore())
+        try {
+          if (proxyWasEnabled) {
+            await restartCore()
+          } else {
+            await mihomoHotReloadConfig().catch(() => restartCore())
+          }
+        } catch (tunStartErr) {
+          await patchControledMihomoConfig({ tun: { enable: false } }).catch(() => {})
+          await patchAppConfig({
+            mainSwitchMode: proxyWasEnabled ? 'sysproxy' : 'sysproxy',
+            proxyMode: proxyWasEnabled
+          }).catch(() => {})
+          if (proxyWasEnabled && writeSysProxy) {
+            await triggerSysProxy(true, onlyActiveDevice).catch(() => {})
+          }
+          throw tunStartErr
         }
 
         // Verify TUN adapter status (poll up to ~4s)
@@ -300,7 +312,7 @@ const Home: React.FC = () => {
           }
         }
 
-        if (status && !status.isUp) {
+        if (!status || !status.isUp) {
           // TUN failed to start: roll back to Proxy or Off
           await patchControledMihomoConfig({ tun: { enable: false } })
           await patchAppConfig({ mainSwitchMode: 'sysproxy', proxyMode: proxyWasEnabled })
@@ -313,20 +325,23 @@ const Home: React.FC = () => {
             await mihomoHotReloadConfig().catch(() => restartCore())
           }
 
-          const errMsg = status.errorMessage || (isRu ? 'TUN адаптер не запустился' : 'TUN adapter failed to start')
-          const suggestion = status.suggestion || ''
+          const errMsg = status?.errorMessage || (isRu ? 'TUN адаптер не запустился' : 'TUN adapter failed to start')
+          const suggestion = status?.suggestion || ''
           toast.error(`${errMsg}${suggestion ? ` (${suggestion})` : ''}`, {
             duration: 9000,
             action: {
               label: isRu ? 'Диагностика' : 'Diagnostics',
               onClick: () => {
                 runTunDiagnostics().then((diag) => {
-                  navigator.clipboard.writeText(diag.summary)
+                  navigator.clipboard.writeText(diag.summary).catch(() => {})
                   toast.success(isRu ? 'Отчёт скопирован в буфер обмена' : 'Diagnostic report copied to clipboard')
                 })
               }
             }
           })
+          window.electron.ipcRenderer.send('updateFloatingWindow')
+          window.electron.ipcRenderer.send('updateTrayMenu')
+          await updateTrayIcon()
           return
         }
 

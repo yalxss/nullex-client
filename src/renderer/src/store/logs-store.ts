@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import dayjs from 'dayjs'
+import { getBufferedLogs } from '@renderer/utils/ipc'
 
 const MAX_LOGS = 500
 // The core can emit bursts of lines; batching keeps the list at one update per tick.
@@ -49,9 +50,18 @@ const flush = (): void => {
   useLogsStore.setState({ logs: next.length > MAX_LOGS ? next.slice(0, MAX_LOGS) : next })
 }
 
-const handleIpcPayload = (log: ControllerLog): void => {
+const toLogEntry = (log: ControllerLog): LogEntry => {
   const now = dayjs()
-  pending.push({ ...log, id: nextId++, time: now.format('L LTS'), clock: now.format('HH:mm:ss') })
+  return {
+    ...log,
+    id: nextId++,
+    time: now.format('L LTS'),
+    clock: log.time || now.format('HH:mm:ss')
+  }
+}
+
+const handleIpcPayload = (log: ControllerLog): void => {
+  pending.push(toLogEntry(log))
   if (!flushTimer) {
     flushTimer = setTimeout(flush, FLUSH_INTERVAL)
   }
@@ -68,10 +78,49 @@ export const attachLogsStore = (): (() => void) => {
   }
   attached = true
 
+  let seeded = false
+  const liveBeforeSeed: ControllerLog[] = []
+
   ipcListener = (_event, payload): void => {
+    if (!seeded) {
+      liveBeforeSeed.push(payload)
+      return
+    }
     handleIpcPayload(payload)
   }
   window.electron.ipcRenderer.on('mihomoLogs', ipcListener)
+
+  // Hydrate logs captured by the Rust backend before WebView mounted (cold boot / silentStart).
+  getBufferedLogs()
+    .then((buffered) => {
+      if (!attached) return
+      const initial = Array.isArray(buffered) ? buffered : []
+      // Drop leading overlap if any live event arrived concurrently while getBufferedLogs resolved
+      const tail = initial.slice(-10)
+      let startIdx = 0
+      while (
+        startIdx < liveBeforeSeed.length &&
+        tail.some(
+          (b) =>
+            b.payload === liveBeforeSeed[startIdx].payload &&
+            b.type === liveBeforeSeed[startIdx].type &&
+            b.time === liveBeforeSeed[startIdx].time
+        )
+      ) {
+        startIdx++
+      }
+      const combined = initial.concat(liveBeforeSeed.slice(startIdx)).slice(-MAX_LOGS)
+      const entriesNewestFirst = combined.map(toLogEntry).reverse()
+      seeded = true
+      liveBeforeSeed.length = 0
+      useLogsStore.setState({ logs: entriesNewestFirst })
+    })
+    .catch(() => {
+      if (!attached) return
+      seeded = true
+      const queued = liveBeforeSeed.splice(0, liveBeforeSeed.length)
+      queued.forEach(handleIpcPayload)
+    })
 
   return (): void => {
     if (!attached) return

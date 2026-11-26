@@ -74,6 +74,7 @@ pub async fn enable_auto_run() -> Result<(), String> {
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
+      <Delay>PT3S</Delay>
     </LogonTrigger>
   </Triggers>
   <Principals>

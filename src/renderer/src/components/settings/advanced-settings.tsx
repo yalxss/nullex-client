@@ -352,7 +352,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = (props) => {
         <>
           <SettingItem title={t('settings.advanced.disconnectDetectInterval')} divider>
             <div className="flex items-center">
-              {interval !== networkDetectionInterval && (
+              {Number.isFinite(interval) && interval !== networkDetectionInterval && (
                 <Button
                   size="sm"
                   className="mr-2"
@@ -367,10 +367,11 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = (props) => {
               <InputGroup className="w-37.5 h-8">
                 <InputGroupInput
                   type="number"
-                  value={interval.toString()}
+                  value={Number.isFinite(interval) ? (interval ?? 10).toString() : ''}
                   min={1}
                   onChange={(event) => {
-                    setInterval(parseInt(event.target.value))
+                    const parsed = parseInt(event.target.value, 10)
+                    setInterval(Number.isNaN(parsed) ? (undefined as unknown as number) : parsed)
                   }}
                 />
                 <InputGroupAddon align="inline-end">
@@ -380,7 +381,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = (props) => {
             </div>
           </SettingItem>
           <SettingItem title={t('settings.advanced.bypassDetectInterfaces')}>
-            {bypass.length != networkDetectionBypass.length && (
+            {JSON.stringify(bypass) !== JSON.stringify(networkDetectionBypass) && (
               <Button
                 size="sm"
                 onClick={async () => {

@@ -17,10 +17,18 @@ import {
   AlertDialogTitle
 } from '@renderer/components/ui/alert-dialog'
 
-const REASON_KEYS: Record<CoreErrorReason, string> = {
+const REASON_KEYS: Record<string, string> = {
   'binary-missing': 'binaryMissing',
+  core_missing: 'binaryMissing',
+  core_invalid: 'binaryMissing',
   'config-invalid': 'configInvalid',
-  crashed: 'crashed'
+  profile_error: 'configInvalid',
+  config_error: 'configInvalid',
+  crashed: 'crashed',
+  core_exit: 'crashed',
+  unexpected_exit: 'crashed',
+  spawn_error: 'crashed',
+  service_start_error: 'crashed'
 }
 
 const CoreErrorAlert: React.FC = () => {
@@ -37,8 +45,9 @@ const CoreErrorAlert: React.FC = () => {
   const supportUrl = profileConfig?.items?.find(
     (item) => item.id === profileConfig.current
   )?.supportUrl
-  const reasonKey = REASON_KEYS[shown?.reason ?? 'crashed']
+  const reasonKey = REASON_KEYS[shown?.reason ?? 'crashed'] ?? 'crashed'
   const canRestart = shown?.reason === 'crashed'
+  const errorDetail = shown?.detail || (shown as { message?: string } | undefined)?.message
 
   const handleRestart = async (event: React.MouseEvent): Promise<void> => {
     // Stay open: a successful start clears the error and closes the alert, a failed one updates it
@@ -64,9 +73,9 @@ const CoreErrorAlert: React.FC = () => {
           <AlertDialogTitle>{t(`coreError.${reasonKey}Title`)}</AlertDialogTitle>
           <AlertDialogDescription>{t(`coreError.${reasonKey}Description`)}</AlertDialogDescription>
         </AlertDialogHeader>
-        {shown?.detail && (
+        {errorDetail && (
           <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-stroke bg-card/80 p-2 text-xs text-foreground/60 select-text">
-            {shown.detail}
+            {errorDetail}
           </pre>
         )}
         <AlertDialogFooter>

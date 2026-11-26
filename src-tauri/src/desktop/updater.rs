@@ -173,23 +173,33 @@ pub async fn download_and_install_update(
         }]),
     );
 
-    let mut download_resp = client
+    let mut download_resp = match client
         .get(download_url)
         .header("User-Agent", "Nullex-Client")
         .send()
         .await
-        .map_err(|e| format!("Download request failed: {e}"))?;
-
-    if !download_resp.status().is_success() {
-        return Err(format!("Download failed with status: {}", download_resp.status()));
-    }
+    {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            let _ = app_handle.emit("ipc-update-status", json!([{ "downloading": false, "progress": 0 }]));
+            return Err(format!("Download failed with status: {}", r.status()));
+        }
+        Err(e) => {
+            let _ = app_handle.emit("ipc-update-status", json!([{ "downloading": false, "progress": 0 }]));
+            return Err(format!("Download request failed: {e}"));
+        }
+    };
 
     let total_size = download_resp.content_length().unwrap_or(0);
     let mut downloaded: u64 = 0;
 
-    let mut file = tokio::fs::File::create(&dest_path)
-        .await
-        .map_err(|e| format!("Failed to create destination file: {e}"))?;
+    let mut file = match tokio::fs::File::create(&dest_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = app_handle.emit("ipc-update-status", json!([{ "downloading": false, "progress": 0 }]));
+            return Err(format!("Failed to create destination file: {e}"));
+        }
+    };
 
     while let Some(chunk_res) = download_resp.chunk().await.transpose() {
         if state.update_cancel.load(Ordering::SeqCst) {
@@ -205,11 +215,22 @@ pub async fn download_and_install_update(
             return Err("Update download cancelled".to_string());
         }
 
-        let chunk = chunk_res.map_err(|e| format!("Error downloading chunk: {e}"))?;
+        let chunk = match chunk_res {
+            Ok(c) => c,
+            Err(e) => {
+                drop(file);
+                let _ = tokio::fs::remove_file(&dest_path).await;
+                let _ = app_handle.emit("ipc-update-status", json!([{ "downloading": false, "progress": 0 }]));
+                return Err(format!("Error downloading chunk: {e}"));
+            }
+        };
         use tokio::io::AsyncWriteExt;
-        file.write_all(&chunk)
-            .await
-            .map_err(|e| format!("Failed to write chunk: {e}"))?;
+        if let Err(e) = file.write_all(&chunk).await {
+            drop(file);
+            let _ = tokio::fs::remove_file(&dest_path).await;
+            let _ = app_handle.emit("ipc-update-status", json!([{ "downloading": false, "progress": 0 }]));
+            return Err(format!("Failed to write chunk: {e}"));
+        }
 
         downloaded += chunk.len() as u64;
         let progress = if total_size > 0 {

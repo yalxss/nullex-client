@@ -16,7 +16,7 @@ use crate::core::manager::{
     revoke_core_permission, start_network_detection, stop_core, stop_network_detection,
 };
 use crate::core::mihomo_api::{
-    apply_log_level, mihomo_change_proxy, mihomo_close_all_connections, mihomo_close_connection,
+    apply_log_level, get_buffered_logs, mihomo_change_proxy, mihomo_close_all_connections, mihomo_close_connection,
     mihomo_config, mihomo_group_delay, mihomo_groups, mihomo_hot_reload_config, mihomo_proxies,
     mihomo_proxy_delay, mihomo_proxy_providers, mihomo_rule_providers, mihomo_rules,
     mihomo_unfixed_proxy, mihomo_update_proxy_providers, mihomo_update_rule_providers,
@@ -218,6 +218,7 @@ pub async fn ipc_invoke(
             let s = get_core_state(st).await;
             serde_json::to_value(s).map_err(|e| e.to_string())
         }
+        "getBufferedLogs" => Ok(json!(get_buffered_logs(st))),
         "installedCores" => Ok(json!(installed_cores())),
         "downloadAlphaCore" => {
             download_alpha_core(st).await?;
@@ -619,6 +620,7 @@ pub async fn ipc_invoke(
         }
         "quitWithoutCore" => {
             st.not_quit_dialog.store(true, Ordering::SeqCst);
+            st.keep_core_on_exit.store(true, Ordering::SeqCst);
             st.is_quitting.store(true, Ordering::SeqCst);
             app_handle.exit(0);
             Ok(Value::Null)
@@ -632,7 +634,14 @@ pub async fn ipc_invoke(
             st.is_quitting.store(true, Ordering::SeqCst);
             let _ = stop_core(st, Some(&app_handle)).await;
             let _ = disable_sys_proxy(st, false).await;
-            app_handle.restart();
+            let exe = crate::utils::dirs::exe_path();
+            let pid = std::process::id();
+            std::process::Command::new(&exe)
+                .arg(format!("--wait-pid={pid}"))
+                .spawn()
+                .map_err(|e| format!("Failed relaunching app: {e}"))?;
+            app_handle.exit(0);
+            Ok(Value::Null)
         }
 
         _ => Err(format!("Unsupported IPC channel: {channel}")),

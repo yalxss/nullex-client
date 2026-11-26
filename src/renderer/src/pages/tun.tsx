@@ -250,9 +250,10 @@ const Tun: React.FC = () => {
             <Input
               type="number"
               className="w-[100px]"
-              value={values.mtu.toString()}
+              value={Number.isFinite(values.mtu) ? values.mtu.toString() : ''}
               onChange={(event) => {
-                setValues({ ...values, mtu: parseInt(event.target.value) })
+                const parsed = parseInt(event.target.value, 10)
+                setValues({ ...values, mtu: Number.isNaN(parsed) ? (undefined as unknown as number) : parsed })
               }}
             />
           </SettingItem>

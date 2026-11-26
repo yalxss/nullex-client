@@ -297,17 +297,38 @@ pub fn get_interfaces() -> Value {
     Value::Object(map)
 }
 
+fn is_virtual_interface_name(name: &str) -> bool {
+    let name_low = name.to_ascii_lowercase();
+    const VIRTUAL_KEYWORDS: &[&str] = &[
+        "meta",
+        "wintun",
+        "mihomo",
+        "nullex",
+        "vethernet",
+        "vmware",
+        "vbox",
+        "virtualbox",
+        "radmin",
+        "hamachi",
+        "zerotier",
+        "tailscale",
+        "wireguard",
+        "docker",
+        "wsl",
+        "hyper-v",
+        "teredo",
+        "isatap",
+        "loopback",
+    ];
+    VIRTUAL_KEYWORDS.iter().any(|kw| name_low.contains(kw))
+}
+
 pub fn has_active_network_interface() -> bool {
     let Ok(ifaces) = NetworkInterface::show() else {
         return false;
     };
     for iface in ifaces {
-        let name_low = iface.name.to_ascii_lowercase();
-        if name_low.contains("meta")
-            || name_low.contains("wintun")
-            || name_low.contains("mihomo")
-            || name_low.contains("nullex")
-        {
+        if is_virtual_interface_name(&iface.name) {
             continue;
         }
         for addr in iface.addr {
@@ -319,6 +340,27 @@ pub fn has_active_network_interface() -> bool {
         }
     }
     false
+}
+
+/// Zero-packet routing check confirming Windows has an active non-loopback, non-FakeIP default route.
+pub fn has_default_route() -> bool {
+    let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") else {
+        return false;
+    };
+    if sock.connect("1.1.1.1:53").is_err() {
+        return false;
+    }
+    match sock.local_addr() {
+        Ok(std::net::SocketAddr::V4(v4)) => {
+            let ip = v4.ip();
+            let octets = ip.octets();
+            !ip.is_loopback()
+                && !ip.is_link_local()
+                && !ip.is_unspecified()
+                && !(octets[0] == 198 && (octets[1] == 18 || octets[1] == 19))
+        }
+        _ => false,
+    }
 }
 
 pub async fn copy_env(state: &Arc<AppState>, env_type: &str) -> Result<(), String> {
@@ -341,6 +383,7 @@ pub async fn copy_env(state: &Arc<AppState>, env_type: &str) -> Result<(), Strin
         "bash" => format!("export https_proxy={addr} http_proxy={addr} all_proxy={addr}"),
         "cmd" => format!("set http_proxy={addr}\r\nset https_proxy={addr}"),
         "powershell" => format!("$env:HTTP_PROXY=\"{addr}\"; $env:HTTPS_PROXY=\"{addr}\""),
+        "nushell" => format!("$env.HTTP_PROXY = \"{addr}\"; $env.HTTPS_PROXY = \"{addr}\""),
         "fish" => format!("set -x http_proxy {addr}; set -x https_proxy {addr}; set -x all_proxy {addr}"),
         _ => addr,
     };
@@ -424,54 +467,72 @@ pub async fn restart_as_admin(
         use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS};
 
-        // 1. Stop core and system proxy before elevating
+        // 1. Remember state and stop core + system proxy before elevating
+        let was_running = crate::core::manager::is_core_running(state).await;
+        let app_cfg = get_app_config(state, false).await.unwrap_or_default();
+        let had_proxy = app_cfg.get("proxyMode").and_then(Value::as_bool).unwrap_or(false);
+        let only_active = app_cfg.get("onlyActiveDevice").and_then(Value::as_bool).unwrap_or(false);
+
         crate::core::manager::stop_core(state, Some(app_handle)).await?;
         crate::sys::sysproxy::disable_sys_proxy_sync(false);
 
         let exe = exe_path();
         let pid = std::process::id();
 
-        // Build the --wait-pid argument as a wide string
-        let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-        let file: Vec<u16> = exe
-            .to_string_lossy()
-            .encode_utf16()
-            .chain(std::iter::once(0u16))
-            .collect();
-        let params_str = format!("--wait-pid={pid}\0");
-        let params: Vec<u16> = params_str.encode_utf16().collect();
+        let spawn_err: Option<u32> = {
+            // Build the --wait-pid argument as a wide string
+            let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+            let file: Vec<u16> = exe
+                .to_string_lossy()
+                .encode_utf16()
+                .chain(std::iter::once(0u16))
+                .collect();
+            let params_str = format!("--wait-pid={pid}\0");
+            let params: Vec<u16> = params_str.encode_utf16().collect();
 
-        let mut sei = SHELLEXECUTEINFOW {
-            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-            fMask: SEE_MASK_NOCLOSEPROCESS,
-            hwnd: std::ptr::null_mut(),
-            lpVerb: verb.as_ptr(),
-            lpFile: file.as_ptr(),
-            lpParameters: params.as_ptr(),
-            lpDirectory: std::ptr::null(),
-            nShow: 1, // SW_NORMAL
-            hInstApp: std::ptr::null_mut(),
-            lpIDList: std::ptr::null_mut(),
-            lpClass: std::ptr::null(),
-            hkeyClass: std::ptr::null_mut(),
-            dwHotKey: 0,
-            Anonymous: unsafe { std::mem::zeroed() },
-            hProcess: std::ptr::null_mut(),
+            let mut sei = SHELLEXECUTEINFOW {
+                cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                fMask: SEE_MASK_NOCLOSEPROCESS,
+                hwnd: std::ptr::null_mut(),
+                lpVerb: verb.as_ptr(),
+                lpFile: file.as_ptr(),
+                lpParameters: params.as_ptr(),
+                lpDirectory: std::ptr::null(),
+                nShow: 1, // SW_NORMAL
+                hInstApp: std::ptr::null_mut(),
+                lpIDList: std::ptr::null_mut(),
+                lpClass: std::ptr::null(),
+                hkeyClass: std::ptr::null_mut(),
+                dwHotKey: 0,
+                Anonymous: unsafe { std::mem::zeroed() },
+                hProcess: std::ptr::null_mut(),
+            };
+
+            let ok = unsafe { ShellExecuteExW(&mut sei) };
+            if ok == 0 {
+                Some(unsafe { windows_sys::Win32::Foundation::GetLastError() })
+            } else {
+                // Close the new process handle — it'll wait for us via --wait-pid
+                if !sei.hProcess.is_null() {
+                    unsafe { CloseHandle(sei.hProcess) };
+                }
+                None
+            }
         };
 
-        let ok = unsafe { ShellExecuteExW(&mut sei) };
-        if ok == 0 {
-            let err = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+        if let Some(err) = spawn_err {
+            // Restore core & sysproxy if user cancelled UAC so VPN isn't left dead
+            if was_running {
+                let _ = crate::core::manager::start_core(state, Some(app_handle)).await;
+            }
+            if had_proxy {
+                let _ = crate::sys::sysproxy::trigger_sys_proxy(state, true, only_active).await;
+            }
             // ERROR_CANCELLED = 1223 → user cancelled UAC → do NOT exit
             if err == 1223 {
                 return Err("UAC elevation was cancelled by user".to_string());
             }
             return Err(format!("ShellExecuteExW failed: error code {err}"));
-        }
-
-        // Close the new process handle — it'll wait for us via --wait-pid
-        if !sei.hProcess.is_null() {
-            unsafe { CloseHandle(sei.hProcess) };
         }
 
         // 2. Exit cleanly via app_handle so RunEvent::Exit fires
@@ -480,4 +541,20 @@ pub async fn restart_as_admin(
     }
     #[cfg(not(windows))]
     Err("Not supported".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filters_virtual_adapters() {
+        assert!(is_virtual_interface_name("Meta"));
+        assert!(is_virtual_interface_name("Wintun Userspace Tunnel"));
+        assert!(is_virtual_interface_name("vEthernet (Default Switch)"));
+        assert!(is_virtual_interface_name("VMware Network Adapter VMnet8"));
+        assert!(is_virtual_interface_name("Radmin VPN"));
+        assert!(!is_virtual_interface_name("Wi-Fi"));
+        assert!(!is_virtual_interface_name("Ethernet"));
+    }
 }

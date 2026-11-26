@@ -52,6 +52,34 @@ let attached = false
 let ipcListener: (() => void) | null = null
 let coreStateListener: ((_event: unknown, coreState: CoreState) => void) | null = null
 
+const mapCoreErrorReason = (reason: unknown): CoreErrorReason => {
+  switch (reason) {
+    case 'binary-missing':
+    case 'core_missing':
+    case 'core_invalid':
+      return 'binary-missing'
+    case 'config-invalid':
+    case 'profile_error':
+    case 'config_error':
+      return 'config-invalid'
+    default:
+      return 'crashed'
+  }
+}
+
+const normalizeCoreState = (coreState: CoreState): CoreState => {
+  if (!coreState?.error) return coreState
+  const rawErr = coreState.error as CoreState['error'] & { message?: string }
+  return {
+    ...coreState,
+    error: {
+      reason: mapCoreErrorReason(rawErr.reason),
+      detail: rawErr.detail || rawErr.message || '',
+      at: typeof rawErr.at === 'number' && rawErr.at > 0 ? rawErr.at : Date.now()
+    }
+  }
+}
+
 export const attachCoreLifecycleStore = (): (() => void) => {
   if (attached) {
     return () => {
@@ -70,12 +98,22 @@ export const attachCoreLifecycleStore = (): (() => void) => {
   window.electron.ipcRenderer.on('core-started', ipcListener)
 
   coreStateListener = (_event, coreState): void => {
-    useCoreLifecycleStore.setState({ coreState })
+    useCoreLifecycleStore.setState({ coreState: normalizeCoreState(coreState) })
   }
   window.electron.ipcRenderer.on('coreStateChanged', coreStateListener)
   // A failure at startup can happen before this window was listening for events
   getCoreState()
-    .then((coreState) => useCoreLifecycleStore.setState({ coreState }))
+    .then((coreState) => {
+      const normalized = normalizeCoreState(coreState)
+      useCoreLifecycleStore.setState({ coreState: normalized })
+      if (normalized?.status === 'running' && useCoreLifecycleStore.getState().startedAt === 0) {
+        waitForGroupsReady().then(() => {
+          if (useCoreLifecycleStore.getState().startedAt === 0) {
+            useCoreLifecycleStore.setState({ startedAt: Date.now() })
+          }
+        })
+      }
+    })
     .catch(() => {})
 
   return (): void => {

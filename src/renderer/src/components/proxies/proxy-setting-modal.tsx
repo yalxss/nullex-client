@@ -17,7 +17,7 @@ import {
   SelectValue
 } from '@renderer/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@renderer/components/ui/tabs'
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import SettingItem from '../base/base-setting-item'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import debounce from '@renderer/utils/debounce'
@@ -46,9 +46,13 @@ const ProxySettingModal: React.FC<Props> = (props) => {
 
   const [url, setUrl] = useState(delayTestUrl ?? '')
 
-  const setUrlDebounce = debounce((v: string) => {
-    patchAppConfig({ delayTestUrl: v })
-  }, 500)
+  const setUrlDebounce = useMemo(
+    () =>
+      debounce((v: string) => {
+        patchAppConfig({ delayTestUrl: v })
+      }, 500),
+    [patchAppConfig]
+  )
 
   useEffect(() => {
     setUrl(delayTestUrl ?? '')
@@ -186,10 +190,11 @@ const ProxySettingModal: React.FC<Props> = (props) => {
             <Input
               type="number"
               className="w-[100px] h-8"
-              value={delayTestConcurrency?.toString() ?? ''}
+              value={delayTestConcurrency !== undefined && Number.isFinite(delayTestConcurrency) ? delayTestConcurrency.toString() : ''}
               placeholder={t('proxies.delayTestConcurrencyPlaceholder')}
               onChange={(event) => {
-                patchAppConfig({ delayTestConcurrency: parseInt(event.target.value) })
+                const parsed = parseInt(event.target.value, 10)
+                patchAppConfig({ delayTestConcurrency: Number.isNaN(parsed) ? undefined : parsed })
               }}
             />
           </SettingItem>
@@ -197,10 +202,11 @@ const ProxySettingModal: React.FC<Props> = (props) => {
             <Input
               type="number"
               className="w-[100px] h-8"
-              value={delayTestTimeout?.toString() ?? ''}
+              value={delayTestTimeout !== undefined && Number.isFinite(delayTestTimeout) ? delayTestTimeout.toString() : ''}
               placeholder={t('proxies.delayTestTimeoutPlaceholder')}
               onChange={(event) => {
-                patchAppConfig({ delayTestTimeout: parseInt(event.target.value) })
+                const parsed = parseInt(event.target.value, 10)
+                patchAppConfig({ delayTestTimeout: Number.isNaN(parsed) ? undefined : parsed })
               }}
             />
           </SettingItem>

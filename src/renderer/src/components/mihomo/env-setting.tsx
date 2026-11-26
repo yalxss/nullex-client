@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import PubSub from 'pubsub-js'
 import { toast } from 'sonner'
 import SettingCard from '../base/base-setting-card'
 import SettingItem from '../base/base-setting-item'

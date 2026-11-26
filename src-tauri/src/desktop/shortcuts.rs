@@ -86,7 +86,14 @@ async fn execute_shortcut_action(state: &Arc<AppState>, app_handle: &AppHandle, 
                     json!({ "tun": { "enable": !current } }),
                 )
                 .await;
+                if crate::core::mihomo_api::mihomo_hot_reload_config(state, Some(app_handle))
+                    .await
+                    .is_err()
+                {
+                    let _ = crate::core::manager::restart_core(state, Some(app_handle)).await;
+                }
                 let _ = app_handle.emit("ipc-controledMihomoConfigUpdated", json!([]));
+                crate::desktop::tray::request_tray_menu_update(state, app_handle);
             }
         }
         "ruleModeShortcut" => {
@@ -154,6 +161,15 @@ pub async fn register_shortcut(
 ) -> Result<bool, String> {
     let gs = app_handle.global_shortcut();
 
+    let parsed_new = if !new_shortcut.trim().is_empty() {
+        let norm_new = normalize_electron_shortcut(new_shortcut);
+        let parsed = Shortcut::from_str(&norm_new)
+            .map_err(|e| format!("Invalid shortcut '{new_shortcut}': {e}"))?;
+        Some((norm_new, parsed))
+    } else {
+        None
+    };
+
     if !old_shortcut.trim().is_empty() {
         let norm_old = normalize_electron_shortcut(old_shortcut);
         if let Ok(parsed) = Shortcut::from_str(&norm_old) {
@@ -162,13 +178,9 @@ pub async fn register_shortcut(
         state.shortcuts.lock().await.remove(action);
     }
 
-    if new_shortcut.trim().is_empty() {
+    let Some((norm_new, parsed_new)) = parsed_new else {
         return Ok(true);
-    }
-
-    let norm_new = normalize_electron_shortcut(new_shortcut);
-    let parsed_new = Shortcut::from_str(&norm_new)
-        .map_err(|e| format!("Invalid shortcut '{new_shortcut}': {e}"))?;
+    };
 
     let st_clone = state.clone();
     let app_clone = app_handle.clone();

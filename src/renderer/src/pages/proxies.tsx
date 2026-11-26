@@ -226,6 +226,12 @@ const Proxies: React.FC = () => {
 
   const onGroupDelay = useCallback(
     async (index: number): Promise<void> => {
+      const targetProxies =
+        allProxies[index]?.length > 0
+          ? allProxies[index]
+          : (groups[index]?.all || []).filter(
+              (proxy) => proxy && includesIgnoreCase(proxy.name, searchValue[index])
+            )
       if (allProxies[index].length === 0) {
         setIsOpen((prev) => {
           const newOpen = [...prev]
@@ -238,11 +244,11 @@ const Proxies: React.FC = () => {
         newDelaying[index] = true
         return newDelaying
       })
-      allProxies[index].forEach((p) => delayingProxiesRef.current.add(p.name))
+      targetProxies.forEach((p) => delayingProxiesRef.current.add(p.name))
       setDelayingTick((c) => c + 1)
       const result: Promise<void>[] = []
       const runningList: Promise<void>[] = []
-      for (const proxy of allProxies[index]) {
+      for (const proxy of targetProxies) {
         const promise = Promise.resolve().then(async () => {
           try {
             const { delay } = await mihomoProxyDelay(proxy.name, groups[index].testUrl, getProviderName(proxy))
@@ -271,7 +277,7 @@ const Proxies: React.FC = () => {
         return newDelaying
       })
     },
-    [allProxies, groups, delayTestConcurrency, mutate, recordDelay, flushDelays]
+    [allProxies, groups, searchValue, delayTestConcurrency, mutate, recordDelay, flushDelays]
   )
 
   const calcCols = useCallback((): number => {
@@ -321,26 +327,40 @@ const Proxies: React.FC = () => {
 
   const scrollToCurrentProxy = useCallback(
     (index: number) => {
-      if (!isOpen[index]) {
+      const wasClosed = !isOpen[index]
+      if (wasClosed) {
         setIsOpen((prev) => {
           const newOpen = [...prev]
           newOpen[index] = true
           return newOpen
         })
       }
-      let i = 0
-      for (let j = 0; j < index; j++) {
-        i += groupCounts[j]
+      const doScroll = (): void => {
+        const curGroups = groupsRef.current
+        const curCounts = groupCountsRef.current
+        const curProxies = allProxiesRef.current
+        let i = 0
+        for (let j = 0; j < index; j++) {
+          i += curCounts[j] || 0
+        }
+        const idxInGroup = (curProxies[index] || []).findIndex(
+          (proxy) => proxy.name === curGroups[index]?.now
+        )
+        if (idxInGroup >= 0) {
+          i += Math.floor(idxInGroup / cols)
+        }
+        virtuosoRef.current?.scrollToIndex({
+          index: Math.floor(i),
+          align: 'start'
+        })
       }
-      i += Math.floor(
-        allProxies[index].findIndex((proxy) => proxy.name === groups[index].now) / cols
-      )
-      virtuosoRef.current?.scrollToIndex({
-        index: Math.floor(i),
-        align: 'start'
-      })
+      if (wasClosed) {
+        setTimeout(doScroll, 60)
+      } else {
+        doScroll()
+      }
     },
-    [isOpen, groupCounts, allProxies, groups, cols]
+    [isOpen, cols]
   )
 
   useEffect(() => {
@@ -539,6 +559,7 @@ const Proxies: React.FC = () => {
       onProxyDelay,
       onChangeProxy,
       proxyDisplayLayout,
+      pingDisplay,
       delayingTick
     ]
   )

@@ -132,11 +132,25 @@ pub async fn import_themes(files: Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
+fn safe_theme_name(theme: &str) -> Result<&str, String> {
+    if theme.is_empty()
+        || theme == "."
+        || theme == ".."
+        || theme.contains('/')
+        || theme.contains('\\')
+        || Path::new(theme).file_name().and_then(|s| s.to_str()) != Some(theme)
+    {
+        return Err("Invalid theme name".to_string());
+    }
+    Ok(theme)
+}
+
 pub async fn read_theme(theme: &str) -> Result<String, String> {
     if theme.is_empty() || theme == "default.css" {
         return Ok(String::new());
     }
-    let path = themes_dir().join(theme);
+    let name = safe_theme_name(theme)?;
+    let path = themes_dir().join(name);
     if !path.exists() {
         return Ok(String::new());
     }
@@ -146,9 +160,10 @@ pub async fn read_theme(theme: &str) -> Result<String, String> {
 }
 
 pub async fn write_theme(theme: &str, css: &str) -> Result<(), String> {
+    let name = safe_theme_name(theme)?;
     let dir = themes_dir();
     let _ = tokio::fs::create_dir_all(&dir).await;
-    tokio::fs::write(dir.join(theme), css)
+    tokio::fs::write(dir.join(name), css)
         .await
         .map_err(|e| format!("Failed writing theme CSS: {e}"))
 }

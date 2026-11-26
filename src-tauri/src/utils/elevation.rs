@@ -9,11 +9,28 @@ pub fn is_running_as_admin() -> bool {
     *IS_ADMIN_CACHED.get_or_init(|| {
         #[cfg(windows)]
         {
-            Command::new("net")
+            if Command::new("net")
                 .args(["session"])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()
                 .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                return true;
+            }
+            // Fallback when Server (LanmanServer) service is disabled on trimmed Windows builds:
+            // S-1-16-12288 = High Mandatory Level (Elevated), S-1-16-16384 = System
+            Command::new("whoami")
+                .args(["/groups"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map(|o| {
+                    if !o.status.success() {
+                        return false;
+                    }
+                    let out = String::from_utf8_lossy(&o.stdout);
+                    out.contains("S-1-16-12288") || out.contains("S-1-16-16384")
+                })
                 .unwrap_or(false)
         }
         #[cfg(not(windows))]

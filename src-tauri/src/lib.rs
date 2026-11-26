@@ -62,31 +62,19 @@ fn install_shutdown_hook(hwnd_raw: isize, state: Arc<AppState>) {
         lparam: windows_sys::Win32::Foundation::LPARAM,
     ) -> windows_sys::Win32::Foundation::LRESULT {
         if msg == WM_QUERYENDSESSION {
-            if let Some(st) = STATE_PTR.get() {
-                st.is_quitting.store(true, std::sync::atomic::Ordering::SeqCst);
-                let pid = st.core_pid.swap(0, std::sync::atomic::Ordering::SeqCst);
-                if pid > 0 {
-                    use windows_sys::Win32::Foundation::CloseHandle;
-                    use windows_sys::Win32::System::Threading::{
-                        OpenProcess, TerminateProcess,
-                        PROCESS_TERMINATE,
-                    };
-                    let h = OpenProcess(PROCESS_TERMINATE, 0, pid);
-                    if h != std::ptr::null_mut() {
-                        TerminateProcess(h, 1);
-                        CloseHandle(h);
-                    }
-                }
-            }
-            disable_sys_proxy_sync(false);
+            // Do not kill core or disable proxy during tentative WM_QUERYENDSESSION,
+            // because another app or user can still cancel shutdown/logoff.
+            // Teardown runs on WM_ENDSESSION with wparam != 0.
             return 1; // TRUE = allow session to end
         }
         if msg == WM_ENDSESSION {
             if wparam != 0 {
+                let mut keep_core = false;
                 if let Some(st) = STATE_PTR.get() {
                     st.is_quitting.store(true, std::sync::atomic::Ordering::SeqCst);
+                    keep_core = st.keep_core_on_exit.load(std::sync::atomic::Ordering::SeqCst);
                     let pid = st.core_pid.swap(0, std::sync::atomic::Ordering::SeqCst);
-                    if pid > 0 {
+                    if pid > 1 {
                         use windows_sys::Win32::Foundation::CloseHandle;
                         use windows_sys::Win32::System::Threading::{
                             OpenProcess, TerminateProcess,
@@ -99,7 +87,9 @@ fn install_shutdown_hook(hwnd_raw: isize, state: Arc<AppState>) {
                         }
                     }
                 }
-                disable_sys_proxy_sync(false);
+                if !keep_core {
+                    disable_sys_proxy_sync(false);
+                }
                 // Exit immediately so Windows CSRSS tears down cleanly without waiting or showing blocking dialogs
                 std::process::exit(0);
             }
@@ -335,10 +325,17 @@ async fn bootstrap_app(state: Arc<AppState>, app_handle: AppHandle) {
         .and_then(|c| c.get("tun").and_then(|t| t.get("enable")).and_then(Value::as_bool))
         .unwrap_or(false);
 
-    // If starting with TUN enabled on boot, give network interface up to 5s to acquire an IP
-    if tun_enable {
-        for _ in 0..10 {
-            if crate::sys::misc::has_active_network_interface() {
+    let is_network_ready = || {
+        crate::sys::misc::has_active_network_interface() && crate::sys::misc::has_default_route()
+    };
+
+    // On cold boot after full PC shutdown, give DHCP/Wi-Fi and default route up to 20s to come online
+    let mut network_ready = true;
+    if tun_enable || proxy_mode {
+        network_ready = false;
+        for _ in 0..40 {
+            if is_network_ready() {
+                network_ready = true;
                 break;
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -346,6 +343,39 @@ async fn bootstrap_app(state: Arc<AppState>, app_handle: AppHandle) {
     }
 
     let _ = start_core(&state, Some(&app_handle)).await;
+
+    // If cold-boot network was still offline past 20s, watch up to 3 minutes and cleanly re-bind core once online
+    if (tun_enable || proxy_mode) && !network_ready {
+        let st_rec = state.clone();
+        let ah_rec = app_handle.clone();
+        tokio::spawn(async move {
+            for _ in 0..90 {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                if st_rec.is_quitting.load(Ordering::SeqCst) {
+                    return;
+                }
+                if crate::sys::misc::has_active_network_interface()
+                    && crate::sys::misc::has_default_route()
+                {
+                    let app_cfg_now = get_app_config(&st_rec, false).await.unwrap_or_default();
+                    let proxy_now = app_cfg_now
+                        .get("proxyMode")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let tun_now = get_controled_mihomo_config(&st_rec, false)
+                        .await
+                        .ok()
+                        .and_then(|c| c.get("tun").and_then(|t| t.get("enable")).and_then(Value::as_bool))
+                        .unwrap_or(false);
+                    if proxy_now || tun_now {
+                        let _ = crate::core::manager::restart_core(&st_rec, Some(&ah_rec)).await;
+                    }
+                    return;
+                }
+            }
+        });
+    }
+
     init_profile_updater(&state, Some(&app_handle)).await;
 
     // Normalize blank profile config structure if needed
@@ -492,9 +522,11 @@ pub fn run() {
         .expect("error while building Nullex Tauri application")
         .run(move |app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
-                // Synchronously disable system proxy unconditionally on any exit/shutdown event
-                disable_sys_proxy_sync(false);
-                if !state_exit.is_quitting.swap(true, Ordering::SeqCst) {
+                let keep_core = state_exit.keep_core_on_exit.load(Ordering::SeqCst);
+                if !keep_core {
+                    disable_sys_proxy_sync(false);
+                }
+                if !state_exit.is_quitting.swap(true, Ordering::SeqCst) && !keep_core {
                     let st = state_exit.clone();
                     let ah = app_handle.clone();
                     tauri::async_runtime::block_on(async move {

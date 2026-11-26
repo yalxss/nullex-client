@@ -373,6 +373,10 @@ export async function cancelUpdate(): Promise<void> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('cancelUpdate'))
 }
 
+export async function getBufferedLogs(): Promise<ControllerLog[]> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('getBufferedLogs'))
+}
+
 export async function getVersion(): Promise<string> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('getVersion'))
 }
@@ -530,7 +534,7 @@ export async function applyTheme(theme: string): Promise<void> {
   }
   applyThemeRunning = true
   try {
-    return await ipcErrorWrapper(window.electron.ipcRenderer.invoke('applyTheme', theme))
+    return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('applyTheme', theme))
   } finally {
     applyThemeRunning = false
     if (waitList.length > 0) {
@@ -554,7 +558,7 @@ export async function copyEnv(type: 'bash' | 'cmd' | 'powershell' | 'nushell'): 
 }
 
 export async function setMainLanguage(lang: string): Promise<void> {
-  await window.electron.ipcRenderer.invoke('setLanguage', lang)
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('setLanguage', lang))
 }
 
 export interface TunStatusResult {

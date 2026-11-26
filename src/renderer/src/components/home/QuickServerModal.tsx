@@ -21,6 +21,7 @@ interface QuickServerModalProps {
 export const QuickServerModal: React.FC<QuickServerModalProps> = ({ open, onClose }) => {
   const { appConfig, patchAppConfig } = useAppConfig()
   const delayTestMode = appConfig?.delayTestMode ?? 'url'
+  const autoCloseConnection = appConfig?.autoCloseConnection ?? true
   const { groups = [], mutate } = useGroups()
   const [search, setSearch] = useState('')
   const [testing, setTesting] = useState(false)
@@ -43,7 +44,9 @@ export const QuickServerModal: React.FC<QuickServerModalProps> = ({ open, onClos
     if (!primaryGroup) return
     try {
       await mihomoChangeProxy(primaryGroup.name, proxyName)
-      await mihomoCloseAllConnections()
+      if (autoCloseConnection) {
+        await mihomoCloseAllConnections().catch(() => {})
+      }
       await new Promise((resolve) => setTimeout(resolve, 150))
       mutate()
       onClose()
@@ -56,7 +59,7 @@ export const QuickServerModal: React.FC<QuickServerModalProps> = ({ open, onClos
     if (!primaryGroup) return
     setTesting(true)
     try {
-      await mihomoGroupDelay(primaryGroup.name, primaryGroup.testUrl || 'http://cp.cloudflare.com')
+      await mihomoGroupDelay(primaryGroup.name, primaryGroup.testUrl || undefined)
       mutate()
     } catch (e) {
       toast.error(`${e}`)

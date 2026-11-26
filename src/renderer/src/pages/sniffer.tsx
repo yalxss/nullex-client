@@ -73,7 +73,10 @@ const Sniffer: React.FC = () => {
         ...values.sniff,
         [protocol]: {
           ...values.sniff[protocol],
-          ports: value.split(',').map((port) => port.trim())
+          ports: value
+            .split(',')
+            .map((port) => port.trim())
+            .filter(Boolean)
         }
       }
     })
@@ -95,7 +98,9 @@ const Sniffer: React.FC = () => {
                   'override-destination': values.overrideDestination,
                   sniff: values.sniff,
                   'skip-domain': values.skipDomain,
-                  'force-domain': values.forceDomain
+                  'force-domain': values.forceDomain,
+                  'skip-dst-address': values.skipDstAddress,
+                  'skip-src-address': values.skipSrcAddress
                 }
               })
             }
@@ -145,7 +150,7 @@ const Sniffer: React.FC = () => {
           <Input
             className="w-[50%]"
             placeholder={t('pages.sniffer.portPlaceholder')}
-            value={values.sniff.HTTP?.ports.join(',')}
+            value={values.sniff.HTTP?.ports?.join(',') ?? ''}
             onChange={(event) => handleSniffPortChange('HTTP', event.target.value)}
           />
         </SettingItem>
@@ -153,7 +158,7 @@ const Sniffer: React.FC = () => {
           <Input
             className="w-[50%]"
             placeholder={t('pages.sniffer.portPlaceholder')}
-            value={values.sniff.TLS?.ports.join(',')}
+            value={values.sniff.TLS?.ports?.join(',') ?? ''}
             onChange={(event) => handleSniffPortChange('TLS', event.target.value)}
           />
         </SettingItem>
@@ -161,7 +166,7 @@ const Sniffer: React.FC = () => {
           <Input
             className="w-[50%]"
             placeholder={t('pages.sniffer.portPlaceholder')}
-            value={values.sniff.QUIC?.ports.join(',')}
+            value={values.sniff.QUIC?.ports?.join(',') ?? ''}
             onChange={(event) => handleSniffPortChange('QUIC', event.target.value)}
           />
         </SettingItem>
